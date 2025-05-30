@@ -271,6 +271,17 @@ class TensorNameMap:
             "model.layers.{bid}.post_attention_layernorm",                   # llama4
         ),
 
+        # predictor
+        MODEL_TENSOR.PREDICTOR_UP: (
+            "model.layers.{bid}.pred_up",
+            "model.layers.{bid}.pred_up_bias"
+        ),
+
+        MODEL_TENSOR.PREDICTOR_DOWN: (
+            "model.layers.{bid}.pred_down",
+            "model.layers.{bid}.pred_down_bias"
+        ),
+
         # Post feed-forward norm
         MODEL_TENSOR.FFN_PRE_NORM: (
             "model.layers.{bid}.pre_feedforward_layernorm", # gemma2
