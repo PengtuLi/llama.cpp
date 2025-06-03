@@ -55,7 +55,7 @@ class ModelBase:
     _model_classes: dict[ModelType, dict[str, type[ModelBase]]] = {
         ModelType.TEXT: {},
         ModelType.MMPROJ: {},
-    }
+    }  # 通过注册机制填充
 
     dir_model: Path
     ftype: gguf.LlamaFileType
@@ -2009,51 +2009,64 @@ class LlamaModel(TextModel):
             if len(experts) > 0:
                 raise ValueError(f"Unprocessed experts: {experts}")
 
-@ModelBase.register("ProSparseLLaMAForCausalLM")
-class ProSparseLlamaModel(TextModel):
+class ReluMLP(torch.nn.Module):
+    def __init__(self, input_dim: int, hidden_dim: int, output_dim: int):
+        super().__init__()
+        self.pred_up = torch.nn.Linear(input_dim, hidden_dim)
+        self.relu = torch.nn.ReLU()
+        self.pred_down = torch.nn.Linear(hidden_dim, output_dim)
+
+    @staticmethod
+    def load_from_file(model_file: Path):
+        state_dict = torch.load(model_file, map_location="cpu", weights_only=True)
+        state_dict_fp16 = {key: value.to(torch.float16) for key, value in state_dict.items()}
+        hidden_size, input_size = state_dict_fp16["pred_up.weight"].shape
+        output_size, _ = state_dict_fp16["pred_down.weight"].shape
+        mlp = ReluMLP(input_size, hidden_size, output_size)
+        mlp.load_state_dict(state_dict_fp16)
+        return mlp
+
+@ModelBase.register("ProSparseLLamaForCausalLM")
+class ProSparseLlamaModel(LlamaModel):
     model_arch = gguf.MODEL_ARCH.PRO_SPARSE_LLAMA
     undo_permute = True
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, dir_model: Path, ftype: int, fname_out: Path, is_big_endian: bool, dir_mlp_pred: Path | None = None, *args, **kwargs):
+        super().__init__(dir_model, ftype, fname_out, is_big_endian, *args, **kwargs)
+        self.dir_mlp_pred = dir_mlp_pred
+    
+    def _get_preds_names(self):
+        predictor_files = sorted(
+            [f for f in os.listdir(self.dir_mlp_pred) if f.endswith(".pt")],
+            key=lambda x: int(x.split("-")[0].replace("L", ""))
+        )
+        for layer_idx, file_name in enumerate(predictor_files):
+            yield layer_idx, file_name
 
-    def set_vocab(self):
-        try:
-            self._set_vocab_sentencepiece()
-        except FileNotFoundError:
+    def get_tensors(self) -> Iterator[tuple[str, Tensor]]:
+        for layer, part_name in self._get_preds_names():
+            logger.info(f"gguf: loading preds part '{part_name}'")
             try:
-                self._set_vocab_llama_hf()
-            except (FileNotFoundError, TypeError):
-                # Llama 3
-                self._set_vocab_gpt2()
+                mlp_model = ReluMLP.load_from_file(self.dir_mlp_pred / part_name)
+                for name, data in mlp_model.state_dict().items():
+                    logger.debug(f"Yielding tensor: {f'blk.{layer}.{name}'} with shape {data.shape}")
+                    yield f"blk.{layer}.{name}", data
+            except Exception as e:
+                logger.error(f"loading {part_name} failed: {str(e)}")
+                raise
+        for name, data in super().get_tensors():
+            yield name, data
 
-        # Apply to CodeLlama only (and ignore for Llama 3 with a vocab size of 128256)
-        if self.hparams.get("vocab_size", 32000) == 32016:
-            special_vocab = gguf.SpecialVocab(
-                self.dir_model, load_merges=False,
-                special_token_types = ['prefix', 'suffix', 'middle', 'eot']
-            )
-            special_vocab._set_special_token("prefix", 32007)
-            special_vocab._set_special_token("suffix", 32008)
-            special_vocab._set_special_token("middle", 32009)
-            special_vocab._set_special_token("eot",    32010)
-            special_vocab.add_to_gguf(self.gguf_writer)
+    def modify_tensors(self, data_torch: Tensor, name: str, bid: int | None) -> Iterable[tuple[str, Tensor]]:
+        if name.startswith("blk.") and "pred_" in name:
+            return [(name, data_torch)]
+        return super().modify_tensors(data_torch, name, bid)
 
-        tokenizer_config_file = self.dir_model / 'tokenizer_config.json'
-        if tokenizer_config_file.is_file():
-            with open(tokenizer_config_file, "r", encoding="utf-8") as f:
-                tokenizer_config_json = json.load(f)
-                if "add_prefix_space" in tokenizer_config_json:
-                    self.gguf_writer.add_add_space_prefix(tokenizer_config_json["add_prefix_space"])
+    def tensor_force_quant(self, name, new_name, bid, n_dims):
+        if new_name.startswith("blk.") and "pred_" in new_name:
+            return gguf.GGMLQuantizationType.F16
+        return super().tensor_force_quant(name, new_name, bid, n_dims) # base default to be false
 
-        # Apply to granite small models only
-        if self.hparams.get("vocab_size", 32000) == 49152:
-            self.gguf_writer.add_add_bos_token(False)
-
-
-# Model#set_gguf_parameters
-# Model#set_vocab
-# Model#write_tensors
 
 @ModelBase.register(
     "LlavaForConditionalGeneration", # pixtral
@@ -6318,6 +6331,10 @@ def parse_args() -> argparse.Namespace:
         nargs="?",
     )
     parser.add_argument(
+        "--predictor_path", type=Path,
+        help="directory containing predictors file",
+    )
+    parser.add_argument(
         "--use-temp-file", action="store_true",
         help="use the tempfile library while processing (helpful when running out of memory, process killed)",
     )
@@ -6418,6 +6435,7 @@ def main() -> None:
         logging.basicConfig(level=logging.INFO)
 
     dir_model = args.model
+    dir_preds = args.predictor_path if not None else None
 
     if args.remote:
         from huggingface_hub import snapshot_download
@@ -6429,6 +6447,9 @@ def main() -> None:
 
     if not dir_model.is_dir():
         logger.error(f'Error: {args.model} is not a directory')
+        sys.exit(1)
+    if dir_preds and not dir_preds.is_dir():
+        logger.error(f'Error: {args.predictor_path} is not a directory')
         sys.exit(1)
 
     ftype_map: dict[str, gguf.LlamaFileType] = {
@@ -6464,22 +6485,27 @@ def main() -> None:
         output_type = ftype_map[args.outtype]
         model_type = ModelType.MMPROJ if args.mmproj else ModelType.TEXT
         hparams = ModelBase.load_hparams(dir_model)
-        model_architecture = get_model_architecture(hparams, model_type)
+        model_architecture = get_model_architecture(hparams, model_type) #LlamaForCausalLM
         logger.info(f"Model architecture: {model_architecture}")
         try:
-            model_class = ModelBase.from_model_architecture(model_architecture, model_type=model_type)
+            model_class = ModelBase.from_model_architecture(model_architecture, model_type=model_type) # 根据model_architecture返回对应的实例 比如 LlamaModel
         except NotImplementedError:
             logger.error(f"Model {model_architecture} is not supported")
             sys.exit(1)
 
         model_instance = model_class(dir_model, output_type, fname_out,
-                                     is_big_endian=args.bigendian, use_temp_file=args.use_temp_file,
+                                     is_big_endian=args.bigendian, 
+                                     use_temp_file=args.use_temp_file,
                                      eager=args.no_lazy,
-                                     metadata_override=args.metadata, model_name=args.model_name,
+                                     metadata_override=args.metadata, 
+                                     model_name=args.model_name,
                                      split_max_tensors=args.split_max_tensors,
-                                     split_max_size=split_str_to_n_bytes(args.split_max_size), dry_run=args.dry_run,
+                                     split_max_size=split_str_to_n_bytes(args.split_max_size), 
+                                     dry_run=args.dry_run,
                                      small_first_shard=args.no_tensor_first_split,
-                                     remote_hf_model_id=str(args.model) if args.remote else None)
+                                     remote_hf_model_id=str(args.model) if args.remote else None,
+                                     dir_mlp_pred=dir_preds
+                                     )
 
         if args.vocab_only:
             logger.info("Exporting model vocab...")
@@ -6494,3 +6520,5 @@ def main() -> None:
 
 if __name__ == '__main__':
     main()
+
+#python convert_hf_to_gguf.py /root/autodl-tmp/models/prosparse-llama-2-7b --predictor_path /root/autodl-tmp/models/prosparse-llama-2-7b-predictor --outtype f16  --outfile spif_pspllama.gguf

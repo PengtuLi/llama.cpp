@@ -271,15 +271,13 @@ class TensorNameMap:
             "model.layers.{bid}.post_attention_layernorm",                   # llama4
         ),
 
-        # predictor
+        # predictor  将文件中的权重名字映射到 gguf 的大类命名中 (e.g model.layers.{bid}.pred_up -> MODEL_TENSOR.PREDICTOR_UP)
         MODEL_TENSOR.PREDICTOR_UP: (
-            "model.layers.{bid}.pred_up",
-            "model.layers.{bid}.pred_up_bias"
+            "model.layers.{bid}.pred_up"
         ),
 
         MODEL_TENSOR.PREDICTOR_DOWN: (
             "model.layers.{bid}.pred_down",
-            "model.layers.{bid}.pred_down_bias"
         ),
 
         # Post feed-forward norm
