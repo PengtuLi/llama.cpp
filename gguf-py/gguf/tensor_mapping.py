@@ -241,7 +241,7 @@ class TensorNameMap:
         ),
 
         MODEL_TENSOR.ATTN_POST_NORM: (
-            "model.layers.{bid}.post_attention_layernorm",     # gemma2 olmo2    # ge
+            "model.layers.{bid}.post_attention_layernorm",     # gemma2 olmo2
             "model.layers.{bid}.post_self_attn_layernorm",     # glm-4-0414
         ),
 
@@ -273,7 +273,7 @@ class TensorNameMap:
 
         # predictor  将文件中的权重名字映射到 gguf 的大类命名中 (e.g model.layers.{bid}.pred_up -> MODEL_TENSOR.PREDICTOR_UP)
         MODEL_TENSOR.PREDICTOR_UP: (
-            "model.layers.{bid}.pred_up"
+            "model.layers.{bid}.pred_up",
         ),
 
         MODEL_TENSOR.PREDICTOR_DOWN: (
@@ -1224,6 +1224,7 @@ class TensorNameMap:
                 tensor_name = TENSOR_NAMES[tensor].format(bid = bid)
                 self.mapping[tensor_name] = (tensor, tensor_name)
                 for key in keys:
+                    print(f"[DEBUG] formatting key: {key}")
                     key = key.format(bid = bid)
                     self.mapping[key] = (tensor, tensor_name)
 

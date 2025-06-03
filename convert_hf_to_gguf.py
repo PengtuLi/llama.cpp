@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-
+# TODO: bias option
 from __future__ import annotations
 
 import ast
@@ -2023,7 +2023,8 @@ class ReluMLP(torch.nn.Module):
         hidden_size, input_size = state_dict_fp16["pred_up.weight"].shape
         output_size, _ = state_dict_fp16["pred_down.weight"].shape
         mlp = ReluMLP(input_size, hidden_size, output_size)
-        mlp.load_state_dict(state_dict_fp16)
+        # mlp.load_state_dict(state_dict_fp16)
+        mlp.load_state_dict(state_dict_fp16, strict=False)
         return mlp
 
 @ModelBase.register("ProSparseLLamaForCausalLM")
@@ -2031,14 +2032,14 @@ class ProSparseLlamaModel(LlamaModel):
     model_arch = gguf.MODEL_ARCH.PRO_SPARSE_LLAMA
     undo_permute = True
 
-    def __init__(self, dir_model: Path, ftype: int, fname_out: Path, is_big_endian: bool, dir_mlp_pred: Path | None = None, *args, **kwargs):
-        super().__init__(dir_model, ftype, fname_out, is_big_endian, *args, **kwargs)
+    def __init__(self, *args, dir_mlp_pred: Path | None = None, **kwargs):
+        super().__init__(*args, **kwargs)
         self.dir_mlp_pred = dir_mlp_pred
     
     def _get_preds_names(self):
         predictor_files = sorted(
-            [f for f in os.listdir(self.dir_mlp_pred) if f.endswith(".pt")],
-            key=lambda x: int(x.split("-")[0].replace("L", ""))
+            [f for f in os.listdir(self.dir_mlp_pred) if re.fullmatch(r"L\d+\.pt", f)],
+            key=lambda x: int(x[1:-3])  
         )
         for layer_idx, file_name in enumerate(predictor_files):
             yield layer_idx, file_name
@@ -6492,6 +6493,10 @@ def main() -> None:
         except NotImplementedError:
             logger.error(f"Model {model_architecture} is not supported")
             sys.exit(1)
+        
+        if model_architecture == "ProSparseLLaMAForCausalLM" and dir_preds is None:
+            logger.error("Error: --predictor_path is required for ProSparseLLaMAForCausalLM")
+            sys.exit(1)
 
         model_instance = model_class(dir_model, output_type, fname_out,
                                      is_big_endian=args.bigendian, 
@@ -6521,4 +6526,5 @@ def main() -> None:
 if __name__ == '__main__':
     main()
 
-#python convert_hf_to_gguf.py /root/autodl-tmp/models/prosparse-llama-2-7b --predictor_path /root/autodl-tmp/models/prosparse-llama-2-7b-predictor --outtype f16  --outfile spif_pspllama.gguf
+
+# python convert_hf_to_gguf.py /root/autodl-tmp/models/prosparse-llama-2-7b --predictor_path /root/autodl-tmp/models/prosparse-llama-2-7b-predictor --outtype f16  --outfile /root/autodl-tmp/models/spif_pspllama.gguf
