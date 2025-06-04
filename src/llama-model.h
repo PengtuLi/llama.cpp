@@ -211,6 +211,14 @@ struct llama_layer {
     struct ggml_tensor * ffn_norm_exps    = nullptr;
     struct ggml_tensor * ffn_norm_enc     = nullptr;
 
+    // ff preds
+    struct ggml_tensor * ffn_pred_up       = nullptr; 
+    struct ggml_tensor * ffn_pred_down     = nullptr; 
+
+    // ff preds bias
+    struct ggml_tensor * ffn_pred_up_b       = nullptr; 
+    struct ggml_tensor * ffn_pred_down_b     = nullptr; 
+    
     // ff
     struct ggml_tensor * ffn_gate     = nullptr; // w1
     struct ggml_tensor * ffn_down     = nullptr; // w2

@@ -632,6 +632,9 @@ class GGUFWriter:
     def add_embedding_length(self, length: int) -> None:
         self.add_uint32(Keys.LLM.EMBEDDING_LENGTH.format(arch=self.arch), length)
 
+    def add_pred_lora_length(self, length: int) -> None:
+        self.add_uint32(Keys.LLM.PRED_LORA.format(arch=self.arch), length)
+    
     def add_features_length(self, length: int) -> None:
         self.add_uint32(Keys.LLM.FEATURES_LENGTH.format(arch=self.arch), length)
 

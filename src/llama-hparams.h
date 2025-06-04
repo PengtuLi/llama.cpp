@@ -38,6 +38,7 @@ struct llama_hparams {
 
     uint32_t n_ctx_train; // context size the model was trained on
     uint32_t n_embd;
+    uint32_t n_pred_lora;
     uint32_t n_embd_features = 0;
     uint32_t n_layer;
     uint32_t n_rot;

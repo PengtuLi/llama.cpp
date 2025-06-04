@@ -2011,9 +2011,9 @@ class LlamaModel(TextModel):
 class ReluMLP(torch.nn.Module):
     def __init__(self, input_dim: int, hidden_dim: int, output_dim: int, bias: bool):
         super().__init__()
-        self.pred_up = torch.nn.Linear(input_dim, hidden_dim, bias=bias)
+        self.ffn_pred_up = torch.nn.Linear(input_dim, hidden_dim, bias=bias)
         self.relu = torch.nn.ReLU()
-        self.pred_down = torch.nn.Linear(hidden_dim, output_dim, bias=bias)
+        self.ffn_pred_down = torch.nn.Linear(hidden_dim, output_dim, bias=bias)
 
     @staticmethod
     def load_from_file(model_file: Path, bias: bool):
@@ -2024,7 +2024,7 @@ class ReluMLP(torch.nn.Module):
         mlp = ReluMLP(input_size, hidden_size, output_size, bias)
         # mlp.load_state_dict(state_dict_fp16)
         mlp.load_state_dict(state_dict_fp16, strict=False)
-        return mlp
+        return mlp, hidden_size
 
 @ModelBase.register("ProSparseLLamaForCausalLM")
 class ProSparseLlamaModel(LlamaModel):
@@ -2048,7 +2048,9 @@ class ProSparseLlamaModel(LlamaModel):
         for layer, part_name in self._get_preds_names():
             logger.info(f"gguf: loading preds part '{part_name}'")
             try:
-                mlp_model = ReluMLP.load_from_file(self.dir_mlp_pred / part_name,  self.preds_bias)
+                mlp_model , pred_lora = ReluMLP.load_from_file(self.dir_mlp_pred / part_name,  self.preds_bias)
+                self.pred_lora = pred_lora # TODO: we did this for {layer_nums} time, seems dumb
+                #print(f"[DEGUB] pred_lora = {pred_lora}") 
                 for name, data in mlp_model.state_dict().items():
                     logger.debug(f"Yielding tensor: {f'blk.{layer}.{name}'} with shape {data.shape}")
                     yield f"blk.{layer}.{name}", data
@@ -2068,6 +2070,13 @@ class ProSparseLlamaModel(LlamaModel):
         if new_name.startswith("blk.") and "pred_" in new_name:
             return gguf.GGMLQuantizationType.F16
         return super().tensor_force_quant(name, new_name, bid, n_dims) # base default to be false
+
+    def set_gguf_parameters(self):
+        super().set_gguf_parameters()
+
+        #TODO : use predictors config.json for perd params loading?
+        self.gguf_writer.add_pred_lora_length(self.pred_lora)
+        logger.info(f"gguf: pred lora length = {self.pred_lora}")
 
 
 @ModelBase.register(

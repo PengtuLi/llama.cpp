@@ -90,6 +90,7 @@ class Keys:
         VOCAB_SIZE                        = "{arch}.vocab_size"
         CONTEXT_LENGTH                    = "{arch}.context_length"
         EMBEDDING_LENGTH                  = "{arch}.embedding_length"
+        PRED_LORA                         = "{arch}.pred_lora"
         FEATURES_LENGTH                   = "{arch}.features_length"
         BLOCK_COUNT                       = "{arch}.block_count"
         LEADING_DENSE_BLOCK_COUNT         = "{arch}.leading_dense_block_count"
@@ -666,8 +667,8 @@ TENSOR_NAMES: dict[MODEL_TENSOR, str] = {
     MODEL_TENSOR.FFN_NORM:                  "blk.{bid}.ffn_norm",
     MODEL_TENSOR.FFN_PRE_NORM:              "blk.{bid}.ffn_norm",
     MODEL_TENSOR.FFN_POST_NORM:             "blk.{bid}.post_ffw_norm",
-    MODEL_TENSOR.PREDICTOR_UP:              "blk.{bid}.pred_up",
-    MODEL_TENSOR.PREDICTOR_DOWN:            "blk.{bid}.pred_down",  
+    MODEL_TENSOR.PREDICTOR_UP:              "blk.{bid}.ffn_pred_up",
+    MODEL_TENSOR.PREDICTOR_DOWN:            "blk.{bid}.ffn_pred_down",  
     MODEL_TENSOR.FFN_GATE:                  "blk.{bid}.ffn_gate",
     MODEL_TENSOR.FFN_DOWN:                  "blk.{bid}.ffn_down",
     MODEL_TENSOR.FFN_UP:                    "blk.{bid}.ffn_up",
@@ -2349,6 +2350,7 @@ KEY_GENERAL_FILE_TYPE            = Keys.General.FILE_TYPE
 KEY_VOCAB_SIZE            = Keys.LLM.VOCAB_SIZE
 KEY_CONTEXT_LENGTH        = Keys.LLM.CONTEXT_LENGTH
 KEY_EMBEDDING_LENGTH      = Keys.LLM.EMBEDDING_LENGTH
+KEY_PRED_LORA             = Keys.LLM.PRED_LORA
 KEY_BLOCK_COUNT           = Keys.LLM.BLOCK_COUNT
 KEY_FEED_FORWARD_LENGTH   = Keys.LLM.FEED_FORWARD_LENGTH
 KEY_USE_PARALLEL_RESIDUAL = Keys.LLM.USE_PARALLEL_RESIDUAL

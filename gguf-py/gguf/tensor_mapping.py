@@ -1224,7 +1224,7 @@ class TensorNameMap:
                 tensor_name = TENSOR_NAMES[tensor].format(bid = bid)
                 self.mapping[tensor_name] = (tensor, tensor_name)
                 for key in keys:
-                    print(f"[DEBUG] formatting key: {key}")
+                    #print(f"[DEBUG] formatting key: {key}")
                     key = key.format(bid = bid)
                     self.mapping[key] = (tensor, tensor_name)
 
