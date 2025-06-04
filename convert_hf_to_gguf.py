@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-# TODO: bias option
 from __future__ import annotations
 
 import ast
@@ -2010,19 +2009,19 @@ class LlamaModel(TextModel):
                 raise ValueError(f"Unprocessed experts: {experts}")
 
 class ReluMLP(torch.nn.Module):
-    def __init__(self, input_dim: int, hidden_dim: int, output_dim: int):
+    def __init__(self, input_dim: int, hidden_dim: int, output_dim: int, bias: bool):
         super().__init__()
-        self.pred_up = torch.nn.Linear(input_dim, hidden_dim)
+        self.pred_up = torch.nn.Linear(input_dim, hidden_dim, bias=bias)
         self.relu = torch.nn.ReLU()
-        self.pred_down = torch.nn.Linear(hidden_dim, output_dim)
+        self.pred_down = torch.nn.Linear(hidden_dim, output_dim, bias=bias)
 
     @staticmethod
-    def load_from_file(model_file: Path):
+    def load_from_file(model_file: Path, bias: bool):
         state_dict = torch.load(model_file, map_location="cpu", weights_only=True)
         state_dict_fp16 = {key: value.to(torch.float16) for key, value in state_dict.items()}
         hidden_size, input_size = state_dict_fp16["pred_up.weight"].shape
         output_size, _ = state_dict_fp16["pred_down.weight"].shape
-        mlp = ReluMLP(input_size, hidden_size, output_size)
+        mlp = ReluMLP(input_size, hidden_size, output_size, bias)
         # mlp.load_state_dict(state_dict_fp16)
         mlp.load_state_dict(state_dict_fp16, strict=False)
         return mlp
@@ -2032,9 +2031,10 @@ class ProSparseLlamaModel(LlamaModel):
     model_arch = gguf.MODEL_ARCH.PRO_SPARSE_LLAMA
     undo_permute = True
 
-    def __init__(self, *args, dir_mlp_pred: Path | None = None, **kwargs):
+    def __init__(self, *args, dir_mlp_pred: Path, preds_bias: bool, **kwargs):
         super().__init__(*args, **kwargs)
         self.dir_mlp_pred = dir_mlp_pred
+        self.preds_bias = preds_bias
     
     def _get_preds_names(self):
         predictor_files = sorted(
@@ -2048,13 +2048,14 @@ class ProSparseLlamaModel(LlamaModel):
         for layer, part_name in self._get_preds_names():
             logger.info(f"gguf: loading preds part '{part_name}'")
             try:
-                mlp_model = ReluMLP.load_from_file(self.dir_mlp_pred / part_name)
+                mlp_model = ReluMLP.load_from_file(self.dir_mlp_pred / part_name,  self.preds_bias)
                 for name, data in mlp_model.state_dict().items():
                     logger.debug(f"Yielding tensor: {f'blk.{layer}.{name}'} with shape {data.shape}")
                     yield f"blk.{layer}.{name}", data
             except Exception as e:
                 logger.error(f"loading {part_name} failed: {str(e)}")
                 raise
+            
         for name, data in super().get_tensors():
             yield name, data
 
@@ -6336,6 +6337,10 @@ def parse_args() -> argparse.Namespace:
         help="directory containing predictors file",
     )
     parser.add_argument(
+        "--preds_bias", action="store_true",
+        help="whether prefs have bias",
+    )
+    parser.add_argument(
         "--use-temp-file", action="store_true",
         help="use the tempfile library while processing (helpful when running out of memory, process killed)",
     )
@@ -6509,7 +6514,8 @@ def main() -> None:
                                      dry_run=args.dry_run,
                                      small_first_shard=args.no_tensor_first_split,
                                      remote_hf_model_id=str(args.model) if args.remote else None,
-                                     dir_mlp_pred=dir_preds
+                                     dir_mlp_pred=dir_preds,
+                                     preds_bias=args.preds_bias
                                      )
 
         if args.vocab_only:
@@ -6527,4 +6533,6 @@ if __name__ == '__main__':
     main()
 
 
-# python convert_hf_to_gguf.py /root/autodl-tmp/models/prosparse-llama-2-7b --predictor_path /root/autodl-tmp/models/prosparse-llama-2-7b-predictor --outtype f16  --outfile /root/autodl-tmp/models/spif_pspllama.gguf
+'''
+ python convert_hf_to_gguf.py /root/autodl-tmp/models/prosparse-llama-2-7b --predictor_path /root/autodl-tmp/models/prosparse-llama-2-7b-predictor --preds_bias --outtype f16  --outfile /root/autodl-tmp/models/spif_pspllama.gguf
+'''
