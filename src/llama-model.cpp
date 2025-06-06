@@ -4596,9 +4596,17 @@ ggml_tensor * llama_model::get_rope_factors(const llama_cparams & cparams, int i
     return layers[il].rope_short;
 }
 
+// GTODO: add more models
+bool llama_use_sparkinfer(const llama_model * model){
+    return model->arch == LLM_ARCH_PRO_SPARSE_LLAMA;
+}
+
+
 struct llm_build_llama : public llm_graph_context {
     llm_build_llama(const llama_model & model, const llm_graph_params & params, ggml_cgraph * gf) : llm_graph_context(params) {
         const int64_t n_embd_head = hparams.n_embd_head_v;
+        
+        bool use_sparkinfer = llama_use_sparkinfer(&model);
 
         GGML_ASSERT(n_embd_head == hparams.n_embd_head_k);
         GGML_ASSERT(n_embd_head == hparams.n_rot);
@@ -4695,13 +4703,29 @@ struct llm_build_llama : public llm_graph_context {
                         LLM_NORM_RMS, il);
                 cb(cur, "ffn_norm", il);
 
-                cur = build_ffn(cur,
-                        model.layers[il].ffn_up,   model.layers[il].ffn_up_b,   NULL,
-                        model.layers[il].ffn_gate, model.layers[il].ffn_gate_b, NULL,
-                        model.layers[il].ffn_down, model.layers[il].ffn_down_b, NULL,
-                        NULL,
-                        LLM_FFN_SILU, LLM_FFN_PAR, il);
-                cb(cur, "ffn_out", il);
+                if(use_sparkinfer){
+                    // Offload_TODO: offload params logits
+
+                    cur = build_sparse_ffn(cur,
+                            model.layers[il].ffn_pred_up, model.layers[il].ffn_pred_up_b,  // GTODO: what if we dont have ffn_pred_up_b
+                            model.layers[il].ffn_pred_down, model.layers[il].ffn_pred_down_b,
+                            model.layers[il].ffn_up,   model.layers[il].ffn_up_b,
+                            model.layers[il].ffn_gate, model.layers[il].ffn_gate_b,
+                            model.layers[il].ffn_down, model.layers[il].ffn_down_b,
+                            model.layers[il].ffn_gpu_up, model.layers[il].ffn_gpu_gate, model.layers[il].ffn_gpu_down,
+                            model.layers[il].ffn_neu_idx, 
+                            LLM_FFN_PAR, il);
+                    cb(cur, "ffn_out", il);
+                }
+                else{
+                    cur = build_ffn(cur,
+                            model.layers[il].ffn_up,   model.layers[il].ffn_up_b,   NULL,
+                            model.layers[il].ffn_gate, model.layers[il].ffn_gate_b, NULL,
+                            model.layers[il].ffn_down, model.layers[il].ffn_down_b, NULL,
+                            NULL,
+                            LLM_FFN_SILU, LLM_FFN_PAR, il);
+                    cb(cur, "ffn_out", il);
+                }
             } else {
                 // MoE branch
                 cur = build_norm(ffn_inp,
@@ -13663,6 +13687,7 @@ int32_t llama_model_n_ctx_train(const llama_model * model) {
 int32_t llama_model_n_embd(const llama_model * model) {
     return model->hparams.n_embd;
 }
+
 
 int32_t llama_model_n_layer(const llama_model * model) {
     return model->hparams.n_layer;

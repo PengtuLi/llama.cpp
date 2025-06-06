@@ -492,6 +492,50 @@ struct llm_graph_context {
        llm_ffn_gate_type   type_gate,
                      int   il) const;
 
+// Offload_TODO: we need offload relevant tensors for offloading, e.g gpu_bucket
+    ggml_tensor * build_sparse_ffn(
+            ggml_tensor * cur,
+            ggml_tensor * pred_up,
+            ggml_tensor * pred_up_b,
+            ggml_tensor * pred_down,
+            ggml_tensor * pred_down_b,
+
+            ggml_tensor * up,
+            ggml_tensor * up_b,
+            ggml_tensor * gate,
+            ggml_tensor * gate_b,
+            ggml_tensor * down,
+            ggml_tensor * down_b,
+
+            ggml_tensor * gpu_up,
+            ggml_tensor * gpu_gate,
+            ggml_tensor * gpu_down,
+            
+            ggml_tensor * neu_idx,
+    llm_ffn_gate_type   type_gate,
+                    int   il
+    ) const;
+
+    ggml_tensor * build_sparse_mul_mat(
+             ggml_tensor * cur,
+             ggml_tensor * weight,              // dense weight 
+             ggml_tensor * gpu_weight,         // weight that offloaded on gpu
+             ggml_tensor * neurons_indice,    // the neurons indice of gpu_weight
+             ggml_tensor * sparse_idx,
+              const char * name,
+                     int   il
+    )const;
+
+    ggml_tensor * build_sparse_axpy(
+             ggml_tensor * cur,
+             ggml_tensor * weight,              // dense weight 
+             ggml_tensor * gpu_weight,         // weight that offloaded on gpu
+             ggml_tensor * neurons_indice,    // the neurons indice of gpu_weight
+             ggml_tensor * sparse_idx,
+              const char * name,
+                     int   il
+    )const;
+
     ggml_tensor * build_moe_ffn(
              ggml_tensor * cur,
              ggml_tensor * gate_inp,

@@ -984,7 +984,7 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
     "OPT_STEP_ADAMW",
 };
 
-static_assert(GGML_OP_COUNT == 82, "GGML_OP_COUNT != 82");
+static_assert(GGML_OP_COUNT == 83, "GGML_OP_COUNT != 83");
 
 static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "none",
@@ -1079,7 +1079,7 @@ static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "adamw(x)",
 };
 
-static_assert(GGML_OP_COUNT == 82, "GGML_OP_COUNT != 82");
+static_assert(GGML_OP_COUNT == 83, "GGML_OP_COUNT != 83");
 
 static_assert(GGML_OP_POOL_COUNT == 2, "GGML_OP_POOL_COUNT != 2");
 
@@ -2781,6 +2781,73 @@ struct ggml_tensor * ggml_mul_mat(
 
     return result;
 }
+
+struct ggml_tensor * ggml_mul_mat_sparse_gpu(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * a,
+        struct ggml_tensor  * b,
+        struct ggml_tensor  * sparse_idx,
+        struct ggml_tensor  * neurons_indice) {
+
+    GGML_ASSERT(ggml_can_mul_mat(a, b));
+    GGML_ASSERT(!ggml_is_transposed(a));
+
+    const int64_t ne[4] = { a->ne[1], b->ne[1], b->ne[2], b->ne[3] };
+    struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F32, 4, ne);
+
+    result->op   = GGML_OP_MUL_MAT_SPARSE;
+    result->src[0] = a;
+    result->src[1] = b;
+    result->src[2] = sparse_idx;
+    result->src[3] = neurons_indice;
+
+    return result;
+}
+
+struct ggml_tensor * ggml_mul_mat_sparse_cpu(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * a,
+        struct ggml_tensor  * b,
+        struct ggml_tensor  * sparse_idx,
+        struct ggml_tensor  * neurons_indice) {
+
+    GGML_ASSERT(ggml_can_mul_mat(a, b));
+    GGML_ASSERT(!ggml_is_transposed(a));
+
+    const int64_t ne[4] = { a->ne[1], b->ne[1], b->ne[2], b->ne[3] };
+    struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F32, 4, ne);
+
+    result->op   = GGML_OP_MUL_MAT_SPARSE;
+    result->src[0] = a;
+    result->src[1] = b;
+    result->src[2] = sparse_idx;
+    result->src[3] = neurons_indice;
+
+    return result;
+}
+
+struct ggml_tensor * ggml_axpy(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * a,
+        struct ggml_tensor  * b,
+        struct ggml_tensor  * sparse_idx,
+        struct ggml_tensor  * neurons_indice) {
+
+    GGML_ASSERT(ggml_can_mul_mat(a, b));
+    GGML_ASSERT(!ggml_is_transposed(a));
+
+    const int64_t ne[4] = { a->ne[1], b->ne[1], b->ne[2], b->ne[3] };
+    struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F32, 4, ne);
+
+    result->op   = GGML_OP_MUL_MAT_SPARSE;
+    result->src[0] = a;
+    result->src[1] = b;
+    result->src[2] = sparse_idx;
+    result->src[3] = neurons_indice;
+
+    return result;
+}
+
 
 void ggml_mul_mat_set_prec(
         struct ggml_tensor * a,

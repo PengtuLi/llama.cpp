@@ -131,6 +131,11 @@ static int llama_model_load(const std::string & fname, std::vector<std::string> 
         return -1;
     }
 
+    if(llama_use_sparkinfer(&model)){
+        LLAMA_LOG_INFO("%s\n","=====================================using sparkinfer======================================");
+    }else{
+        LLAMA_LOG_INFO("%s\n","=====================================fallback to dense=====================================");
+    }
     return 0;
 }
 
