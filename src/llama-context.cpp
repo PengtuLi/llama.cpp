@@ -986,7 +986,7 @@ int llama_context::decode(llama_batch & inp_batch) {
 
         res->set_inputs(&ubatch);
 
-        const auto compute_status = graph_compute(gf, ubatch.n_tokens > 1);
+        const auto compute_status = graph_compute(gf, ubatch.n_tokens > 1); // GTODO_COMPUTE
         if (compute_status != GGML_STATUS_SUCCESS) {
             switch (compute_status) {
                 case GGML_STATUS_ABORTED:

@@ -214,10 +214,16 @@ struct llama_layer {
     // ff preds
     struct ggml_tensor * ffn_pred_up       = nullptr; 
     struct ggml_tensor * ffn_pred_down     = nullptr; 
-
-    // ff preds bias
     struct ggml_tensor * ffn_pred_up_b       = nullptr; 
     struct ggml_tensor * ffn_pred_down_b     = nullptr; 
+
+    // ffn slice on gpu
+    struct ggml_tensor * ffn_gpu_gate     = nullptr;
+    struct ggml_tensor * ffn_gpu_down     = nullptr;
+    struct ggml_tensor * ffn_gpu_up       = nullptr;
+
+    // ffn sparse infernece relevant 
+    struct ggml_tensor * ffn_neu_idx      = nullptr;
     
     // ff
     struct ggml_tensor * ffn_gate     = nullptr; // w1
@@ -377,11 +383,12 @@ struct llama_model {
     explicit llama_model(const struct llama_model_params & params);
     ~llama_model();
 
-    void load_stats  (llama_model_loader & ml);
-    void load_arch   (llama_model_loader & ml);
-    void load_hparams(llama_model_loader & ml);
-    void load_vocab  (llama_model_loader & ml);
-    bool load_tensors(llama_model_loader & ml); // returns false if cancelled by progress_callback
+    void load_stats          (llama_model_loader & ml);
+    void load_arch           (llama_model_loader & ml);
+    void load_hparams        (llama_model_loader & ml);
+    void load_vocab          (llama_model_loader & ml);
+    bool load_sparse_tensors (llama_model_loader & ml);
+    bool load_tensors        (llama_model_loader & ml); // returns false if cancelled by progress_callback
 
     std::string arch_name() const;
     std::string type_name() const;
@@ -431,3 +438,5 @@ const char * llm_type_name(llm_type type);
 // For internal test use
 // TODO: remove
 const std::vector<std::pair<std::string, ggml_tensor *>> & llama_internal_get_tensor_map(const llama_model * model);
+
+bool llama_use_sparkinfer(const llama_model *);

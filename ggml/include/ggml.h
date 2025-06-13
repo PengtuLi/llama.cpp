@@ -397,6 +397,11 @@ extern "C" {
         GGML_PREC_F32     = 10,
     };
 
+    enum ggml_backend_type {
+        GGML_BACKEND_CPU = 0,
+        GGML_BACKEND_GPU = 1,
+    };
+
     // model file types
     enum ggml_ftype {
         GGML_FTYPE_UNKNOWN        = -1,
@@ -457,6 +462,7 @@ extern "C" {
         GGML_OP_L2_NORM,
 
         GGML_OP_MUL_MAT,
+        GGML_OP_MUL_MAT_SPARSE,
         GGML_OP_MUL_MAT_ID,
         GGML_OP_OUT_PROD,
 
@@ -574,6 +580,7 @@ extern "C" {
     // n-dimensional tensor
     struct ggml_tensor {
         enum ggml_type type;
+        //enum ggml_backend_type backend;
 
         struct ggml_backend_buffer * buffer;
 
@@ -1147,6 +1154,27 @@ extern "C" {
             struct ggml_context * ctx,
             struct ggml_tensor  * a,
             struct ggml_tensor  * b);
+
+    GGML_API struct ggml_tensor * ggml_mul_mat_sparse_gpu(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * a,
+        struct ggml_tensor  * b,
+        struct ggml_tensor  * sparse_idx,
+        struct ggml_tensor  * gpu_bucket);
+
+    GGML_API struct ggml_tensor * ggml_mul_mat_sparse_cpu(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * a,
+        struct ggml_tensor  * b,
+        struct ggml_tensor  * sparse_idx,
+        struct ggml_tensor  * gpu_bucket);
+
+    GGML_API struct ggml_tensor * ggml_axpy(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * a,
+        struct ggml_tensor  * b,
+        struct ggml_tensor  * sparse_idx,
+        struct ggml_tensor  * gpu_bucket);
 
     // change the precision of a matrix multiplication
     // set to GGML_PREC_F32 for higher precision (useful for phi-2)

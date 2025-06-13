@@ -672,11 +672,8 @@ ggml_tensor * llm_graph_context::build_ffn(
     }
 
     if (down_b) {
-        cb(cur, "ffn_down", il);
-    }
-
-    if (down_b) {
         cur = ggml_add(ctx0, cur, down_b);
+        cb(cur, "ffn_down", il);
     }
 
     if (down_s) {
@@ -686,6 +683,159 @@ ggml_tensor * llm_graph_context::build_ffn(
 
     return cur;
 }
+
+// build ffn sparse mul_mat graph
+ggml_tensor * llm_graph_context::build_sparse_mul_mat(
+             ggml_tensor * cur,
+             ggml_tensor * weight,              // dense weight, it should be on cpu for cpu computing
+             ggml_tensor * gpu_weight,         // sliced weight that offloaded on gpu
+             ggml_tensor * neurons_indice,    // the neurons indice of gpu_weight
+             ggml_tensor * sparse_idx,
+              const char * name,
+                     int   il
+) const{
+    std::string full_name = "ffn_" + std::string(name) + "_sparse";
+    ggml_tensor * out = nullptr;
+
+    // GTODO : do we need specific implement of full_gpu? 
+
+    out = ggml_mul_mat_sparse_cpu(ctx0, weight, cur, sparse_idx, neurons_indice);
+    cb(out, full_name.c_str(), il);
+
+#ifdef GGML_USE_CUBLAS
+    ggml_tensor * out_gpu = ggml_mul_mat_sparse_gpu(ctx0, gpu_weight, cur, sparse_idx, neurons_indice);
+    // ggml_cuda_assign_buffers_no_alloc(out_gpu); GTODO: from powerinfer, wtf is this, do we need it??
+    cb(out_gpu, (full_name + "_gpu").c_str(), il);
+
+    out = ggml_add(ctx0, out, out_gpu);
+    cb(out, (full_name + "_merged").c_str(), il);
+#endif
+
+    return out;
+}
+
+
+// build ffn sparse mul_mat graph
+ggml_tensor * llm_graph_context::build_sparse_axpy(
+             ggml_tensor * cur,
+             ggml_tensor * weight,              // dense weight, it should be on cpu for cpu computing
+             ggml_tensor * gpu_weight,         // sliced weight that offloaded on gpu
+             ggml_tensor * neurons_indice,    // the neurons indice of gpu_weight
+             ggml_tensor * sparse_idx,
+              const char * name,
+                     int   il
+) const{
+    std::string full_name = "ffn_" + std::string(name) + "_sparse";
+    ggml_tensor * out = nullptr;
+
+    // GTODO : do we need specific implement of full_gpu? 
+
+    out = ggml_axpy(ctx0, weight, cur, sparse_idx, neurons_indice);
+    cb(out, full_name.c_str(), il);
+
+#ifdef GGML_USE_CUBLAS
+    ggml_tensor * out_gpu = ggml_axpy(ctx0, gpu_weight, cur, sparse_idx, neurons_indice);
+    // ggml_cuda_assign_buffers_no_alloc(out_gpu); GTODO: from powerinfer, wtf is this, do we need it??
+    cb(out_gpu, (full_name + "_gpu").c_str(), il);
+
+    out = ggml_add(ctx0, out, out_gpu);
+    cb(out, (full_name + "_merged").c_str(), il);
+#endif
+
+    return out;
+}
+
+
+// build sparse ffn graph  
+ggml_tensor * llm_graph_context::build_sparse_ffn(
+         ggml_tensor * cur,
+         ggml_tensor * pred_up,
+         ggml_tensor * pred_up_b,
+         ggml_tensor * pred_down,
+         ggml_tensor * pred_down_b,
+
+         ggml_tensor * up,
+         ggml_tensor * up_b,
+         ggml_tensor * gate,
+         ggml_tensor * gate_b,
+         ggml_tensor * down,
+         ggml_tensor * down_b,
+
+         ggml_tensor * gpu_up,
+         ggml_tensor * gpu_gate,
+         ggml_tensor * gpu_down,
+         
+         ggml_tensor * neu_idx,
+   llm_ffn_gate_type   type_gate,
+                 int   il) const{
+
+        // predictor
+        ggml_tensor * sparse_idx = ggml_mul_mat(ctx0, pred_up, cur);
+        {
+            cb(sparse_idx, "pred_up", il);
+
+            if(pred_up_b){
+                sparse_idx = ggml_add(ctx0, sparse_idx, pred_up_b);
+                cb(sparse_idx, "pred_up_b", il);
+            }
+
+            sparse_idx = ggml_relu(ctx0, sparse_idx);
+            cb(sparse_idx, "pred_relu",il);
+
+            sparse_idx = ggml_mul_mat(ctx0, pred_down, sparse_idx);
+            cb(sparse_idx, "pred_down", il);
+
+            if(pred_down_b){
+                sparse_idx = ggml_add(ctx0, sparse_idx, pred_up_b);
+                cb(sparse_idx, "pred_down_b", il);
+            }
+        }
+
+        // sparse_ffn  GTODO: use integrated kernel?
+        {
+            ggml_tensor * up_out = build_sparse_mul_mat(cur, up, gpu_up, neu_idx, sparse_idx, "up", il); 
+            if(up_b){
+                up_out = ggml_add(ctx0, up_out, up_b);
+                cb(up_out, "fnn_up_b", il);
+            }
+
+            if(gate){
+                ggml_tensor * gate_out = build_sparse_mul_mat(cur, gate, gpu_gate, neu_idx, sparse_idx, "gate", il); 
+                gate_out = ggml_add(ctx0, gate_out, gate_b);
+                cb(up_out,"fnn_gate_b",il);
+                
+                if(gate_b){
+                    gate_out = ggml_add(ctx0, gate_out, gate_b);
+                    cb(gate_out, "fnn_gate_b", il);
+                }
+
+                // we only support par gate_op
+                if (type_gate == LLM_FFN_PAR){
+                    gate_out = ggml_relu(ctx0, gate_out);
+                    cb(cur, "ffn_gate_act",il);
+
+                    gate_out = ggml_mul(ctx0, gate_out, up_out);
+                    cb(cur, "ffn_gate_par",il);
+                }else{
+                    GGML_ASSERT(false && "unsupported gate type");
+                }
+                
+                cur = gate_out;
+            }else{
+                cur = up_out;
+            }
+
+            cur = build_sparse_axpy(cur, down, gpu_down, neu_idx, sparse_idx, "down", il); 
+
+            if (down_b) {
+                cur = ggml_add(ctx0, cur, down_b);
+                cb(cur, "ffn_down_b", il);
+            }
+        }
+        
+        return cur;
+    }
+
 
 ggml_tensor * llm_graph_context::build_moe_ffn(
          ggml_tensor * cur,
