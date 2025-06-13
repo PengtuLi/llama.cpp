@@ -2257,6 +2257,7 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
             ggml_cuda_op_rms_norm_back(ctx, dst);
             break;
         case GGML_OP_MUL_MAT:
+        case GGML_OP_MUL_MAT_SPARSE:  // GTODO: currently we havnt build sparse kernels, so we fallback to dense mulmat
             ggml_cuda_mul_mat(ctx, dst->src[0], dst->src[1], dst);
             break;
         case GGML_OP_MUL_MAT_ID:
