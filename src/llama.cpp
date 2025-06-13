@@ -9,6 +9,7 @@
 
 #include "ggml.h"
 #include "ggml-backend.h"
+#include "ggml-cuda.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -83,6 +84,22 @@ int64_t llama_time_us(void) {
     return ggml_time_us();
 }
 
+static size_t llama_set_vram_budget(double budget_gb, int gpu_device) {
+    size_t free = 0;
+    size_t total = 0;
+    if (budget_gb < 0) {
+        // if the user didn't specify a budget, use all available memory
+        // and leave 256 MB as a safety margin
+        ggml_backend_cuda_get_device_memory(gpu_device, &free, &total);
+        free -= 256*1024*1024;
+    } else {
+        // otherwise, use the specified budget
+        free = (size_t) (budget_gb * 1024 * 1024 * 1024);
+    }
+
+    return free;
+}
+
 // Returns 0 on success, -1 on error, and -2 on cancellation via llama_progress_callback
 static int llama_model_load(const std::string & fname, std::vector<std::string> & splits, llama_model & model, llama_model_params & params) {
     // loading time will be recalculated after the first eval, so
@@ -123,9 +140,24 @@ static int llama_model_load(const std::string & fname, std::vector<std::string> 
             return 0;
         }
 
-        if (!model.load_tensors(ml)) {
-            return -2;
+        // the sparse loading entry!
+        if (llama_use_sparkinfer(&model)){
+            if(params.n_gpu_layers > 0){
+                LLAMA_LOG_WARN("%s: sparse inference ignores n_gpu_layers, you can use --vram-budget option instead\n", __func__);
+            }
+            llama_set_vram_budget(params.vram_budget_gb, params.main_gpu);
+            bool sparse_load_success = model.load_sparse_tensors(ml);
+            if(!sparse_load_success){
+                LLAMA_LOG_ERROR("%s: failed to load sparse tensors", __func__);
+                return -2;
+            }
         }
+        else{ // use original dense loading
+            if (!model.load_tensors(ml)) {
+                return -2;
+            }
+        }
+
     } catch (const std::exception & err) {
         LLAMA_LOG_ERROR("%s: error loading model: %s\n", __func__, err.what());
         return -1;

@@ -383,11 +383,12 @@ struct llama_model {
     explicit llama_model(const struct llama_model_params & params);
     ~llama_model();
 
-    void load_stats  (llama_model_loader & ml);
-    void load_arch   (llama_model_loader & ml);
-    void load_hparams(llama_model_loader & ml);
-    void load_vocab  (llama_model_loader & ml);
-    bool load_tensors(llama_model_loader & ml); // returns false if cancelled by progress_callback
+    void load_stats          (llama_model_loader & ml);
+    void load_arch           (llama_model_loader & ml);
+    void load_hparams        (llama_model_loader & ml);
+    void load_vocab          (llama_model_loader & ml);
+    bool load_sparse_tensors (llama_model_loader & ml);
+    bool load_tensors        (llama_model_loader & ml); // returns false if cancelled by progress_callback
 
     std::string arch_name() const;
     std::string type_name() const;

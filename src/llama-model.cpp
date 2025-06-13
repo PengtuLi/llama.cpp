@@ -1452,6 +1452,21 @@ void llama_model::load_vocab(llama_model_loader & ml) {
     vocab.load(ml, kv);
 }
 
+bool llama_model::load_sparse_tensors(llama_model_loader &ml) {
+    const auto & use_mlock    = params.use_mlock;
+    const auto & tensor_split = params.tensor_split;
+
+    const int n_layer = hparams.n_layer;
+
+    const bool use_mmap_buffer = true;
+    LLAMA_LOG_INFO("%s: loading sparse model tensors, this can take a while...\n", __func__);
+
+    // GTODO: load sparse tensors to CUDA
+    
+    // now we just fallback to original loading...
+    return llama_model::load_tensors(ml);
+}
+
 bool llama_model::load_tensors(llama_model_loader & ml) {
     const auto & split_mode   = params.split_mode;
     const auto & n_gpu_layers = params.n_gpu_layers;
