@@ -580,7 +580,7 @@ extern "C" {
     // n-dimensional tensor
     struct ggml_tensor {
         enum ggml_type type;
-        enum ggml_backend_type backend;
+        //enum ggml_backend_type backend;
 
         struct ggml_backend_buffer * buffer;
 

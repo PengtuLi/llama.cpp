@@ -699,11 +699,11 @@ ggml_tensor * llm_graph_context::build_sparse_mul_mat(
 
     // GTODO : do we need specific implement of full_gpu? 
 
-    out = ggml_mul_mat_sparse_cpu(ctx0, weight, cur, sparse_idx, neurons_indice, out->ne[0]);
+    out = ggml_mul_mat_sparse_cpu(ctx0, weight, cur, sparse_idx, neurons_indice);
     cb(out, full_name.c_str(), il);
 
 #ifdef GGML_USE_CUBLAS
-    ggml_tensor * out_gpu = ggml_mul_mat_sparse_gpu(ctx0, gpu_weight, cur, sparse_idx, neurons_indice, out->ne[0]);
+    ggml_tensor * out_gpu = ggml_mul_mat_sparse_gpu(ctx0, gpu_weight, cur, sparse_idx, neurons_indice);
     // ggml_cuda_assign_buffers_no_alloc(out_gpu); GTODO: from powerinfer, wtf is this, do we need it??
     cb(out_gpu, (full_name + "_gpu").c_str(), il);
 
