@@ -786,9 +786,11 @@ ggml_tensor * llm_graph_context::build_sparse_ffn(
             cb(sparse_idx, "pred_down", il);
 
             if(pred_down_b){
-                sparse_idx = ggml_add(ctx0, sparse_idx, pred_up_b);
+                sparse_idx = ggml_add(ctx0, sparse_idx, pred_down_b);
                 cb(sparse_idx, "pred_down_b", il);
             }
+
+
         }
 
         // sparse_ffn  GTODO: use integrated kernel?
@@ -801,8 +803,6 @@ ggml_tensor * llm_graph_context::build_sparse_ffn(
 
             if(gate){
                 ggml_tensor * gate_out = build_sparse_mul_mat(cur, gate, gpu_gate, neu_idx, sparse_idx, "gate", il); 
-                gate_out = ggml_add(ctx0, gate_out, gate_b);
-                cb(up_out,"fnn_gate_b",il);
                 
                 if(gate_b){
                     gate_out = ggml_add(ctx0, gate_out, gate_b);

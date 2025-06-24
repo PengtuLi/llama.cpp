@@ -1,0 +1,1 @@
+CUDA_VISIBLE_DEVICES=1 ./build/bin/llama-simple -m /share/models/prosparse-7b-gguf-w-our-predictor/prosparse-7b.gguf "hello,world!"

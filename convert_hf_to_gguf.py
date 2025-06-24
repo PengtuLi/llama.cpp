@@ -2038,8 +2038,8 @@ class ProSparseLlamaModel(LlamaModel):
     
     def _get_preds_names(self):
         predictor_files = sorted(
-            [f for f in os.listdir(self.dir_mlp_pred) if re.fullmatch(r"L\d+\.pt", f)],
-            key=lambda x: int(x[1:-3])  
+            [f for f in os.listdir(self.dir_mlp_pred) if re.fullmatch(r"model_\d+\.pt", f)],
+            key=lambda x: int(re.search(r"\d+", x).group()) # type: ignore
         )
         for layer_idx, file_name in enumerate(predictor_files):
             yield layer_idx, file_name
