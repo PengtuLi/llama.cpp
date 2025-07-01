@@ -1448,6 +1448,194 @@ UseGgmlGemm2:;
     }
 }
 
+// static void ggml_compute_forward_mul_mat_sparse(
+//         const struct ggml_compute_params * params,
+//         const struct ggml_tensor * src0,
+//         const struct ggml_tensor * src1,
+//               struct ggml_tensor * dst) {
+
+//     int64_t t0 = ggml_perf_time_us();
+//     UNUSED(t0);
+
+//     GGML_TENSOR_BINARY_OP_LOCALS;
+
+//     const int ith = params->ith;
+//     const int nth = params->nth;
+
+//     const enum ggml_type type = src0->type;
+
+//     const bool src1_cont = ggml_is_contiguous(src1);
+
+//     ggml_vec_dot_t    const vec_dot               = type_traits[type].vec_dot;
+//     enum ggml_type    const vec_dot_type          = type_traits[type].vec_dot_type;
+//     ggml_from_float_t const from_float_to_vec_dot = type_traits[vec_dot_type].from_float;
+
+//     const float threshold = sparse_pred_threshold;
+
+//     GGML_ASSERT(ne0 == ne01);
+//     GGML_ASSERT(ne1 == ne11);
+//     GGML_ASSERT(ne2 == ne12);
+//     GGML_ASSERT(ne3 == ne13);
+
+//     // we don't support permuted src0 or src1
+//     GGML_ASSERT(nb00 == ggml_type_size(type));
+//     GGML_ASSERT(nb10 == sizeof(float));
+
+//     // dst cannot be transposed or permuted
+//     GGML_ASSERT(nb0 == sizeof(float));
+//     GGML_ASSERT(nb0 <= nb1);
+//     GGML_ASSERT(nb1 <= nb2);
+//     GGML_ASSERT(nb2 <= nb3);
+
+//     // broadcast factors
+//     const int64_t r2 = ne12/ne02;
+//     const int64_t r3 = ne13/ne03;
+
+//     // nb01 >= nb00 - src0 is not transposed
+//     //   compute by src0 rows
+
+//     if (params->type == GGML_TASK_INIT) {
+//         if (src1->type != vec_dot_type) {
+//             char * wdata = params->wdata;
+//             const size_t row_size = ne10*ggml_type_size(vec_dot_type)/ggml_blck_size(vec_dot_type);
+
+//             for (int64_t i13 = 0; i13 < ne13; ++i13) {
+//                 for (int64_t i12 = 0; i12 < ne12; ++i12) {
+//                     for (int64_t i11 = 0; i11 < ne11; ++i11) {
+//                         from_float_to_vec_dot((float *)((char *) src1->data + i13*nb13 + i12*nb12 + i11*nb11), (void *) wdata, ne10);
+//                         wdata += row_size;
+//                     }
+//                 }
+//             }
+//         }
+//         atomic_store(params->aic, 0);
+
+//         return;
+//     }
+
+//     if (params->type == GGML_TASK_FINALIZE) {
+//         return;
+//     }
+
+//     const void * wdata    = (src1->type == vec_dot_type) ? src1->data : params->wdata;
+//     const size_t row_size = ne10*ggml_type_size(vec_dot_type)/ggml_blck_size(vec_dot_type);
+
+//     const int64_t nr0 = ne01;           // src0 rows
+//     const int64_t nr1 = ne11*ne12*ne13; // src1 rows
+
+
+//     // distribute the thread work across the inner or outer loop based on which one is larger
+
+//     const int64_t nth0 = nr0 > nr1 ? nth : 1; // parallelize by src0 rows
+//     const int64_t nth1 = nr0 > nr1 ? 1 : nth; // parallelize by src1 rows
+
+//     const int64_t ith0 = ith % nth0;
+//     const int64_t ith1 = ith / nth0;
+
+//     const int64_t dr0 = (nr0 + 8*nth0 - 1)/(8*nth0);
+//     const int64_t dr1 = (nr1 + nth1 - 1)/nth1;
+//     // const int64_t dr0 = (nr0 + nth0 - 1)/(nth0);
+//     // const int64_t dr1 = (nr1 + nth1 - 1)/nth1;
+
+//     int64_t ir010 = dr0*ith0;
+//     int64_t ir011 = MIN(ir010 + dr0, nr0);
+//     // const int64_t ir011 = ir010 + dr0;
+
+//     const int64_t ir110 = dr1*ith1;
+//     const int64_t ir111 = MIN(ir110 + dr1, nr1);
+
+//     //printf("ir010 = %6lld, ir011 = %6lld, ir110 = %6lld, ir111 = %6lld\n", ir010, ir011, ir110, ir111);
+
+//     // threads with no work simply yield (not sure if it helps)
+//     // if (ir010 >= ir011 || ir110 >= ir111) {
+//     //     sched_yield();
+//     //     return;
+//     // }
+
+//     assert(ne12 % ne02 == 0);
+//     assert(ne13 % ne03 == 0);
+
+//     // block-tiling attempt
+//     // const int64_t blck_0 = 16;
+//     const int64_t blck_1 = 16;
+//     // int total = 0;
+
+//     // attempt to reduce false-sharing (does not seem to make a difference)
+//     // float tmp[16];
+//     float *ffdata = (float *)dst->src[2]->data;
+//     int *gid = (int *)dst->src[3]->data;
+//     float *predictor_data = (float *)dst->src[2]->data;
+//     const size_t predictor_row_size = dst->src[2]->ne[0]*ggml_type_size(GGML_TYPE_F32)/ggml_blck_size(GGML_TYPE_F32);
+
+//     while(true) {
+//         ir010 = atomic_fetch_add(params->aic, dr0);
+//         ir011 = MIN(ir010 + dr0, nr0);
+//         for (int64_t ir0 = ir010; ir0 < ir011; ++ir0)
+//         {
+//             for (int64_t iir1 = ir110; iir1 < ir111; iir1 += blck_1)
+//             {
+//                     if (ir0 > nr0)
+//                         break;
+//                 // for (int64_t iir0 = ir010; iir0 < ir011; iir0 += blck_0) {
+//                 // for (int64_t iir0 = ir010; iir0 < ir011;) {
+//                 for (int64_t ir1 = iir1; ir1 < iir1 + blck_1 && ir1 < ir111; ++ir1)
+//                 {
+//                     const int64_t i13 = (ir1 / (ne12 * ne11));
+//                     const int64_t i12 = (ir1 - i13 * ne12 * ne11) / ne11;
+//                     const int64_t i11 = (ir1 - i13 * ne12 * ne11 - i12 * ne11);
+
+//                     // broadcast src0 into src1
+//                     const int64_t i03 = i13 / r3;
+//                     const int64_t i02 = i12 / r2;
+
+//                     const int64_t i1 = i11;
+//                     const int64_t i2 = i12;
+//                     const int64_t i3 = i13;
+
+//                     const char *src0_row = (const char *)src0->data + (0 + i02 * nb02 + i03 * nb03);
+
+//                     // desc: when src1 is not a contiguous memory block we have to calculate the offset using the strides
+//                     //       if it is, then we have either copied the data to params->wdata and made it contiguous or we are using
+//                     //       the original src1 data pointer, so we should index using the indices directly
+//                     // TODO: this is a bit of a hack, we should probably have a better way to handle this
+//                     const char *src1_col = (const char *)wdata +
+//                                            (src1_cont || src1->type != vec_dot_type
+//                                                 ? (i11 + i12 * ne11 + i13 * ne12 * ne11) * row_size
+//                                                 : (i11 * nb11 + i12 * nb12 + i13 * nb13));
+//                     ffdata = (float *)((char *)predictor_data + (i11      + i12*ne11 + i13*ne12*ne11)*predictor_row_size);
+//                     // printf("ith %d row %d ir1 %d %d %d %d %d\n", ith, ir0, ir1, src1_col-(char *)wdata, ffdata-predictor_data, predictor_row_size, dst->src[2]->ne[1]);
+
+//                     float *dst_col = (float *)((char *)dst->data + (i1 * nb1 + i2 * nb2 + i3 * nb3));
+
+//                     // if (ffdata[ir0] <= 0.0f) {
+//                     if (gid[ir0] == 1 || ffdata[ir0] < threshold) {
+//                         dst_col[ir0] = 0;
+//                         continue;
+//                     }
+//                     vec_dot(ne00, &dst_col[ir0], src0_row + ir0 * nb01, src1_col);
+//                 }
+//                 // }
+//             }
+//         }
+//         if (ir010 + dr0 >= nr0) {
+//             break;
+//         }
+
+//     }
+//     // printf("total %d\n", total);
+
+//     // int predictor_cpu = 0;
+//     // int predictor = 0;
+//     // for (int i = 0; i < 9216 *4 ; i++) {
+//     //     if (ffdata[i] > 0.5f && gid[i] == 0)
+//     //         predictor_cpu += 1;
+//     //     if (ffdata[i] > 0.5f)
+//     //         predictor += 1;
+//     // }
+//     // if (ith == 0)
+//     //     printf("predictor %d predictor_cpu %d\n", predictor, predictor_cpu);
+// }
+
 // ggml_compute_forward_mul_mat_id
 
 #define MMID_MATRIX_ROW(row_id, i1) matrix_rows[(row_id)*ids->ne[0]*ids->ne[1] + (i1)]
@@ -1830,6 +2018,26 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
         case GGML_OP_MUL_MAT:
             {
                 ggml_compute_forward_mul_mat(params, tensor);
+            } break;
+        case GGML_OP_MUL_MAT_SPARSE:
+            {
+                GGML_ASSERT(tensor->src[2] != NULL && "sparsity index is required for MUL_MAT_SPARSE");
+
+                // MUL_MAT_SPARSE is the first operation in the FFN block, and
+                // tensor->src[1] is the activation from the previous layer/attention block and can be at GPU.
+                // tensor->src[2] is the sparsity index and might also be computed at GPU (depending on predictor offloading condition).
+                // we copy them back to CPU in advance to make sure tensor->data is valid.
+                // ggml_ensure_tensor_data_at_memory(tensor->src[1]);
+                // ggml_ensure_tensor_data_at_memory(tensor->src[2]);
+
+                if (tensor->src[2]->ne[0] > 1000) {
+                    // ggml_compute_forward_mul_mat_sparse(params, tensor->src[0], tensor->src[1], tensor);
+                } else {
+                    // if (params->ith == 0)
+                    //     printf("name %s num %d\n", ggml_get_name(tensor), num);
+                    // ggml_compute_forward_mul_mat_sparse_head(params, tensor->src[0], tensor->src[1], tensor);
+                    // ggml_compute_forward_mul_mat(params, tensor->src[0], tensor->src[1], tensor);
+                }
             } break;
         case GGML_OP_MUL_MAT_ID:
             {
@@ -2226,6 +2434,20 @@ static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
         case GGML_OP_OUT_PROD:
             {
                 n_tasks = n_threads;
+            } break;
+        case GGML_OP_MUL_MAT_SPARSE:
+        case GGML_OP_AXPY:
+            {
+                n_tasks = n_threads;
+
+#if defined(GGML_USE_CUDA)
+                // if (node->backend == GGML_BACKEND_GPU && node->op_params[0] > 0) {
+                //     // Fully offloaded to GPU
+                //     n_tasks = 1;
+                // } else {
+                //     GGML_ASSERT(n_threads > 1 && "n_threads must be > 1 to enable hybrid CPU/GPU computation");
+                // }
+#endif
             } break;
         case GGML_OP_GET_ROWS:
             {

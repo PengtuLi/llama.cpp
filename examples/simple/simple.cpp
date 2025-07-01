@@ -11,14 +11,16 @@ static void print_usage(int, char ** argv) {
 }
 
 int main(int argc, char ** argv) {
+    
     // path to the model gguf file
     std::string model_path;
     // prompt to generate text from
-    std::string prompt = "Hello my name is";
+    // write a prompt to test llm capability
+    std::string prompt = "Write a short story about a robot learning to love.";
     // number of layers to offload to the GPU
     int ngl = 99;
     // number of tokens to predict
-    int n_predict = 32;
+    int n_predict = 128;
 
     // parse command line arguments
 

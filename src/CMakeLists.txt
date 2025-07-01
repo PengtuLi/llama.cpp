@@ -45,3 +45,7 @@ if (BUILD_SHARED_LIBS)
     target_compile_definitions(llama PRIVATE LLAMA_BUILD)
     target_compile_definitions(llama PUBLIC  LLAMA_SHARED)
 endif()
+
+if (GGML_CUDA_FORCE_CUBLAS)
+    add_compile_definitions(GGML_CUDA_FORCE_CUBLAS)
+endif()

@@ -461,8 +461,12 @@ extern "C" {
         GGML_OP_GROUP_NORM,
         GGML_OP_L2_NORM,
 
+        // sparkinfer
         GGML_OP_MUL_MAT,
         GGML_OP_MUL_MAT_SPARSE,
+        GGML_OP_AXPY,
+        
+
         GGML_OP_MUL_MAT_ID,
         GGML_OP_OUT_PROD,
 
@@ -1175,6 +1179,10 @@ extern "C" {
         struct ggml_tensor  * b,
         struct ggml_tensor  * sparse_idx,
         struct ggml_tensor  * gpu_bucket);
+
+
+
+
 
     // change the precision of a matrix multiplication
     // set to GGML_PREC_F32 for higher precision (useful for phi-2)
