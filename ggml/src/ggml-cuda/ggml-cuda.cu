@@ -285,7 +285,13 @@ static ggml_cuda_device_info ggml_cuda_init() {
     }
 
     // configure logging to stdout
-    // CUBLAS_CHECK(cublasLoggerConfigure(1, 1, 0, nullptr));
+
+#ifdef GGML_CUDA_DEBUG
+    CUBLAS_CHECK(cublasLoggerConfigure(1, 1, 0, nullptr));
+    GGML_LOG_INFO("cublas logging enabled\n");
+#else
+    GGML_LOG_INFO("cublas logging disabled\n");
+#endif
 
     return info;
 }

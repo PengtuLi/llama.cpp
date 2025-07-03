@@ -387,7 +387,7 @@ struct llama_model {
     void load_arch           (llama_model_loader & ml);
     void load_hparams        (llama_model_loader & ml);
     void load_vocab          (llama_model_loader & ml);
-    bool load_sparse_tensors (llama_model_loader & ml);
+    bool load_sparse_tensors (llama_model_loader & ml,long int vram_budget_gb);
     bool load_tensors        (llama_model_loader & ml); // returns false if cancelled by progress_callback
 
     std::string arch_name() const;

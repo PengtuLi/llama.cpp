@@ -1,7 +1,7 @@
 # !bin bash
 
 ./build/bin/llama-speculative \
-        -m /root/autodl-tmp/model/prosparse-llama-2-7b-gguf/prosparse-llama-2-7b.gguf \
+        -m /share/models/prosparse-7b-gguf-w-our-predictor/prosparse-7b.gguf \
         -md /root/autodl-tmp/models/llama-160m/llama-160m.fp16.gguf \
         -c 0 -co -ngl 99 -ngld 99 -fa \
         --draft-max 7 --draft-min 3 --draft-p-min 0.0 \

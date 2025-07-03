@@ -87,6 +87,11 @@ int64_t llama_time_us(void) {
 static size_t llama_set_vram_budget(double budget_gb, int gpu_device) {
     size_t free = 0;
     size_t total = 0;
+
+#ifndef GGML_CUDA_FORCE_CUBLAS
+        LLAMA_LOG_ERROR("%s: sparkinfer need to force enable cublas. \n", __func__);
+        exit(-1);
+#endif
     if (budget_gb < 0) {
         // if the user didn't specify a budget, use all available memory
         // and leave 256 MB as a safety margin
@@ -145,8 +150,10 @@ static int llama_model_load(const std::string & fname, std::vector<std::string> 
             if(params.n_gpu_layers > 0){
                 LLAMA_LOG_WARN("%s: sparse inference ignores n_gpu_layers, you can use --vram-budget option instead\n", __func__);
             }
-            llama_set_vram_budget(params.vram_budget_gb, params.main_gpu);
-            bool sparse_load_success = model.load_sparse_tensors(ml);
+            size_t free = llama_set_vram_budget(params.vram_budget_gb, params.main_gpu);
+            LLAMA_LOG_INFO("%s: using sparse inference with vram budget %.2f GB, actual_vram_budget is %.2f GB on GPU %d\n",
+                    __func__, params.vram_budget_gb, free/(1024 * 1024 * 1024), params.main_gpu);
+            bool sparse_load_success = model.load_sparse_tensors(ml,free);
             if(!sparse_load_success){
                 LLAMA_LOG_ERROR("%s: failed to load sparse tensors", __func__);
                 return -2;

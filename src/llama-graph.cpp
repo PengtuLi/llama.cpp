@@ -697,20 +697,23 @@ ggml_tensor * llm_graph_context::build_sparse_mul_mat(
     std::string full_name = "ffn_" + std::string(name) + "_sparse";
     ggml_tensor * out = nullptr;
 
-    // GTODO : do we need specific implement of full_gpu? 
+    // GTODO : do we need specific implement of full_gpu? yes
 
     out = ggml_mul_mat_sparse_cpu(ctx0, weight, cur, sparse_idx, neurons_indice);
     cb(out, full_name.c_str(), il);
 
-#ifdef GGML_USE_CUBLAS
-    ggml_tensor * out_gpu = ggml_mul_mat_sparse_gpu(ctx0, gpu_weight, cur, sparse_idx, neurons_indice);
-    // ggml_cuda_assign_buffers_no_alloc(out_gpu); GTODO: from powerinfer, wtf is this, do we need it??
-    cb(out_gpu, (full_name + "_gpu").c_str(), il);
+#ifdef GGML_USE_CUDA
+    if (gpu_weight)
+    {
+        ggml_tensor * out_gpu = ggml_mul_mat_sparse_gpu(ctx0, gpu_weight, cur, sparse_idx, neurons_indice);
+        // ggml_cuda_assign_buffers_no_alloc(out_gpu); GTODO: from powerinfer, wtf is this, do we need it??
+        cb(out_gpu, (full_name + "_gpu").c_str(), il);
 
-    out = ggml_add(ctx0, out, out_gpu);
-    cb(out, (full_name + "_merged").c_str(), il);
+        out = ggml_add(ctx0, out, out_gpu);
+        cb(out, (full_name + "_merged").c_str(), il);
+    }
 #endif
-
+    
     return out;
 }
 
@@ -733,13 +736,15 @@ ggml_tensor * llm_graph_context::build_sparse_axpy(
     out = ggml_axpy(ctx0, weight, cur, sparse_idx, neurons_indice);
     cb(out, full_name.c_str(), il);
 
-#ifdef GGML_USE_CUBLAS
-    ggml_tensor * out_gpu = ggml_axpy(ctx0, gpu_weight, cur, sparse_idx, neurons_indice);
-    // ggml_cuda_assign_buffers_no_alloc(out_gpu); GTODO: from powerinfer, wtf is this, do we need it??
-    cb(out_gpu, (full_name + "_gpu").c_str(), il);
+#ifdef GGML_USE_CUDA
+    if (gpu_weight) {
+        ggml_tensor * out_gpu = ggml_axpy(ctx0, gpu_weight, cur, sparse_idx, neurons_indice);
+        // ggml_cuda_assign_buffers_no_alloc(out_gpu); GTODO: from powerinfer, wtf is this, do we need it??
+        cb(out_gpu, (full_name + "_gpu").c_str(), il);
 
-    out = ggml_add(ctx0, out, out_gpu);
-    cb(out, (full_name + "_merged").c_str(), il);
+        out = ggml_add(ctx0, out, out_gpu);
+        cb(out, (full_name + "_merged").c_str(), il);
+    }
 #endif
 
     return out;
@@ -786,9 +791,11 @@ ggml_tensor * llm_graph_context::build_sparse_ffn(
             cb(sparse_idx, "pred_down", il);
 
             if(pred_down_b){
-                sparse_idx = ggml_add(ctx0, sparse_idx, pred_up_b);
+                sparse_idx = ggml_add(ctx0, sparse_idx, pred_down_b);
                 cb(sparse_idx, "pred_down_b", il);
             }
+
+
         }
 
         // sparse_ffn  GTODO: use integrated kernel?
@@ -801,8 +808,6 @@ ggml_tensor * llm_graph_context::build_sparse_ffn(
 
             if(gate){
                 ggml_tensor * gate_out = build_sparse_mul_mat(cur, gate, gpu_gate, neu_idx, sparse_idx, "gate", il); 
-                gate_out = ggml_add(ctx0, gate_out, gate_b);
-                cb(up_out,"fnn_gate_b",il);
                 
                 if(gate_b){
                     gate_out = ggml_add(ctx0, gate_out, gate_b);
