@@ -805,6 +805,9 @@ class TextModel(ModelBase):
         if chkhsh == "d5f1dd6f980fec569fb218a81a7658ac45fc56b38c5a0adeb1c232fbe04ef5ec":
             # ref: https://huggingface.co/ByteDance-Seed/Seed-Coder-8B-Base
             res = "seed-coder"
+        if chkhsh == "2c934e5e1c8275b75011b9942836389a87eaa1a63116104e52424515e7649c46":
+            # ref: https://huggingface.co/facebook/opt-6.7b
+            res = "opt"
 
         if res is None:
             logger.warning("\n")
@@ -2038,7 +2041,7 @@ class ProSparseLlamaModel(LlamaModel):
     
     def _get_preds_names(self):
         predictor_files = sorted(
-            [f for f in os.listdir(self.dir_mlp_pred) if re.fullmatch(r"model_\d+\.pt", f)],
+            [f for f in os.listdir(self.dir_mlp_pred) if re.fullmatch(r"L\d+\.pt", f)],
             key=lambda x: int(re.search(r"\d+", x).group()) # type: ignore
         )
         for layer_idx, file_name in enumerate(predictor_files):
@@ -2078,6 +2081,79 @@ class ProSparseLlamaModel(LlamaModel):
         self.gguf_writer.add_pred_lora_length(self.pred_lora)
         logger.info(f"gguf: pred lora length = {self.pred_lora}")
 
+@ModelBase.register("OPTForCausalLM")
+class OPTModel(TextModel):
+    model_arch = gguf.MODEL_ARCH.OPT
+    undo_permute = True
+
+    def __init__(self, *args, dir_mlp_pred: Path, preds_bias: bool, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.dir_mlp_pred = dir_mlp_pred
+        self.preds_bias = preds_bias
+
+    def set_vocab(self):
+        self._set_vocab_gpt2()
+
+    def _get_preds_names(self):
+        predictor_files = sorted(
+            [f for f in os.listdir(self.dir_mlp_pred) if re.fullmatch(r"model_\d+\.pt", f)],
+            key=lambda x: int(re.search(r"\d+", x).group()) # type: ignore
+        )
+        for layer_idx, file_name in enumerate(predictor_files):
+            yield layer_idx, file_name
+    
+    @staticmethod
+    def permute(weights: Tensor, n_head: int, n_head_kv: int | None):
+        if n_head_kv is not None and n_head != n_head_kv:
+            n_head = n_head_kv
+        return (weights.reshape(n_head, 2, weights.shape[0] // n_head // 2, *weights.shape[1:])
+                .swapaxes(1, 2)  
+                .reshape(weights.shape))
+    
+    def modify_tensors(self, data_torch: Tensor, name: str, bid: int | None) -> Iterable[tuple[str, Tensor]]:
+        n_head = self.hparams["num_attention_heads"]
+        n_kv_head = self.hparams.get("num_key_value_heads")
+        
+        if self.undo_permute:
+            if name.endswith(("q_proj.weight", "q_proj.bias")):
+                data_torch = OPTModel.permute(data_torch, n_head, n_head)
+            if name.endswith(("k_proj.weight", "k_proj.bias")):
+                data_torch = OPTModel.permute(data_torch, n_head, n_kv_head)
+        
+        return [(self.map_tensor_name(name), data_torch)]
+
+    def get_tensors(self) -> Iterator[tuple[str, Tensor]]:
+        for layer, part_name in self._get_preds_names():
+            logger.info(f"gguf: loading preds part '{part_name}'")
+            try:
+                mlp_model , pred_lora = ReluMLP.load_from_file(self.dir_mlp_pred / part_name,  self.preds_bias)
+                self.pred_lora = pred_lora # TODO: we did this for {layer_nums} time, seems dumb
+                #print(f"[DEGUB] pred_lora = {pred_lora}") 
+                for name, data in mlp_model.state_dict().items():
+                    logger.debug(f"Yielding tensor: {f'blk.{layer}.{name}'} with shape {data.shape}")
+                    yield f"blk.{layer}.{name}", data
+            except Exception as e:
+                logger.error(f"loading {part_name} failed: {str(e)}")
+                raise
+
+        for name, data in super().get_tensors():
+            yield name, data
+    
+    def prepare_tensors(self):
+        super().prepare_tensors()
+    
+    # TODO: when to use?
+    def tensor_force_quant(self, name, new_name, bid, n_dims):
+        if new_name.startswith("blk.") and "pred_" in new_name:
+            return gguf.GGMLQuantizationType.F16
+        return super().tensor_force_quant(name, new_name, bid, n_dims) # base default to be false
+
+    def set_gguf_parameters(self):
+        super().set_gguf_parameters()
+        hparams = self.hparams
+        self.gguf_writer.add_vocab_size(hparams["vocab_size"])
+        self.gguf_writer.add_pred_lora_length(self.pred_lora)
+        logger.info(f"gguf: pred lora length = {self.pred_lora}")
 
 @ModelBase.register(
     "LlavaForConditionalGeneration", # pixtral
@@ -3135,8 +3211,8 @@ class GPT2Model(TextModel):
 
     def set_gguf_parameters(self):
         self.gguf_writer.add_block_count(self.hparams["n_layer"])
-        self.gguf_writer.add_context_length(self.hparams["n_ctx"])
-        self.gguf_writer.add_embedding_length(self.hparams["n_embd"])
+        self.gguf_writer.add_context_length(self.hparams["n_ctx"]) 
+        self.gguf_writer.add_embedding_length(self.hparams["n_embd"]) 
         self.gguf_writer.add_feed_forward_length(4 * self.hparams["n_embd"])
         self.gguf_writer.add_head_count(self.hparams["n_head"])
         self.gguf_writer.add_layer_norm_eps(self.hparams["layer_norm_epsilon"])
@@ -6435,6 +6511,10 @@ def get_model_architecture(hparams: dict[str, Any], model_type: ModelType) -> st
         arch = vision_config["architectures"][0]
     return arch
 
+def is_sparkinfer_model(model_arch):
+    return model_arch == "ProSparseLLaMAForCausalLM" or \
+           model_arch == "OPTForCausalLM"
+        
 
 def main() -> None:
     args = parse_args()
@@ -6500,6 +6580,7 @@ def main() -> None:
         output_type = ftype_map[args.outtype]
         model_type = ModelType.MMPROJ if args.mmproj else ModelType.TEXT
         hparams = ModelBase.load_hparams(dir_model)
+        logger.info(f"loading hparams:\n {hparams}")
         model_architecture = get_model_architecture(hparams, model_type) #LlamaForCausalLM
         logger.info(f"Model architecture: {model_architecture}")
         try:
@@ -6508,8 +6589,8 @@ def main() -> None:
             logger.error(f"Model {model_architecture} is not supported")
             sys.exit(1)
         
-        if model_architecture == "ProSparseLLaMAForCausalLM" and dir_preds is None:
-            logger.error("Error: --predictor_path is required for ProSparseLLaMAForCausalLM")
+        if is_sparkinfer_model(model_architecture) and dir_preds is None:
+            logger.error("Error: --predictor_path is required for SparkInfer type model conversion")
             sys.exit(1)
 
         model_instance = model_class(dir_model, output_type, fname_out,
@@ -6544,4 +6625,6 @@ if __name__ == '__main__':
 
 '''
  python convert_hf_to_gguf.py /root/autodl-tmp/models/prosparse-llama-2-7b --predictor_path /root/autodl-tmp/models/prosparse-llama-2-7b-predictor --preds_bias --outtype f16  --outfile /root/autodl-tmp/models/spif_pspllama.gguf
+ python convert_hf_to_gguf.py /root/autodl-tmp/models/opt-6.7b --predictor_path /root/autodl-tmp/models/opt-6.7b-predictors --preds_bias --outtype f16  --outfile /root/autodl-tmp/models/spif_opt.gguf
+
 '''
