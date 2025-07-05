@@ -279,6 +279,7 @@ class MODEL_ARCH(IntEnum):
     MMPROJ           = auto() # dummy arch for clip.cpp
     LLAMA            = auto()
     PRO_SPARSE_LLAMA = auto()
+    OPT              = auto()
     LLAMA4           = auto()
     DECI             = auto()
     FALCON           = auto()
@@ -627,7 +628,8 @@ MODEL_ARCH_NAMES: dict[MODEL_ARCH, str] = {
     MODEL_ARCH.WAVTOKENIZER_DEC: "wavtokenizer-dec",
     MODEL_ARCH.PLM:              "plm",
     MODEL_ARCH.BAILINGMOE:       "bailingmoe",
-    MODEL_ARCH.PRO_SPARSE_LLAMA: "prosparse-llama"
+    MODEL_ARCH.PRO_SPARSE_LLAMA: "prosparse-llama",
+    MODEL_ARCH.OPT:              "opt"
 }
 
 VISION_PROJECTOR_TYPE_NAMES: dict[VISION_PROJECTOR_TYPE, str] = {
@@ -1315,6 +1317,20 @@ MODEL_TENSORS: dict[MODEL_ARCH, list[MODEL_TENSOR]] = {
         MODEL_TENSOR.FFN_NORM,
         MODEL_TENSOR.FFN_DOWN,
         MODEL_TENSOR.FFN_UP,
+    ],
+    MODEL_ARCH.OPT: [ 
+        MODEL_TENSOR.TOKEN_EMBD,
+        MODEL_TENSOR.OUTPUT_NORM,
+        MODEL_TENSOR.ATTN_Q,
+        MODEL_TENSOR.ATTN_K,
+        MODEL_TENSOR.ATTN_V,
+        MODEL_TENSOR.ATTN_OUT,
+        MODEL_TENSOR.ATTN_OUT_NORM,
+        MODEL_TENSOR.PREDICTOR_UP, 
+        MODEL_TENSOR.PREDICTOR_DOWN,
+        MODEL_TENSOR.FFN_DOWN,
+        MODEL_TENSOR.FFN_UP,
+        MODEL_TENSOR.LAYER_OUT_NORM,
     ],
     MODEL_ARCH.PHI2: [
         MODEL_TENSOR.TOKEN_EMBD,

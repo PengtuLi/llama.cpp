@@ -31,6 +31,8 @@ class TensorNameMap:
             "model.embeddings",                          # rwkv7
             "model.word_embeddings",                     # bailingmoe
             "language_model.model.embed_tokens",         # llama4
+            "decoder.embed_tokens.weight",               # opt
+            "decoder.embed_positions",                   # opt  why here?
         ),
 
         # Token type embeddings
@@ -92,6 +94,7 @@ class TensorNameMap:
             "model.ln_out",                            # rwkv7
             "backbone.final_layer_norm",               # wavtokenizer
             "model.norm",                              # llama4
+            "decoder.final_layer_norm",                # opt
         ),
 
         # Rope frequencies
@@ -174,6 +177,7 @@ class TensorNameMap:
             "transformer.decoder_layer.{bid}.multi_head_attention.query",# Grok
             "transformer.h.{bid}.attn.attention.q_proj",                 # exaone
             "model.layers.{bid}.self_attn.q_proj",                       # llama4
+            "decoder.layers.{bid}.self_attn.q_proj",                     # opt
         ),
 
         # Attention key
@@ -189,6 +193,7 @@ class TensorNameMap:
             "transformer.decoder_layer.{bid}.multi_head_attention.key",# Grok
             "transformer.h.{bid}.attn.attention.k_proj",               # exaone
             "model.layers.{bid}.self_attn.k_proj",                     # llama4
+            "decoder.layers.{bid}.self_attn.k_proj",                   # opt
         ),
 
         # Attention value
@@ -203,6 +208,7 @@ class TensorNameMap:
             "transformer.decoder_layer.{bid}.multi_head_attention.value",# Grok
             "transformer.h.{bid}.attn.attention.v_proj",                 # exaone
             "model.layers.{bid}.self_attn.v_proj",                       # llama4
+            "decoder.layers.{bid}.self_attn.v_proj",                     # opt
         ),
 
         # Attention output
@@ -230,14 +236,16 @@ class TensorNameMap:
             "transformer.layers.{bid}.attn.out_proj",                       # openelm
             "transformer.h.{bid}.attn.attention.out_proj",                  # exaone
             "model.layers.{bid}.self_attn.o_proj",                          # llama4
+            "decoder.layers.{bid}.self_attn.out_proj",                      # opt
         ),
 
         # Attention output norm
         MODEL_TENSOR.ATTN_OUT_NORM: (
-            "encoder.layer.{bid}.attention.output.LayerNorm",  # bert
-            "encoder.layers.{bid}.norm1",                      # nomic-bert
-            "transformer.decoder_layer.{bid}.rms_norm_1",      # Grok
-            "transformer.blocks.{bid}.norm_attn_norm.norm_2",  # dbrx
+            "encoder.layer.{bid}.attention.output.LayerNorm",    # bert
+            "encoder.layers.{bid}.norm1",                        # nomic-bert
+            "transformer.decoder_layer.{bid}.rms_norm_1",        # Grok
+            "transformer.blocks.{bid}.norm_attn_norm.norm_2",    # dbrx
+            "decoder.layers.{bid}.self_attn_layer_norm",         # opt
         ),
 
         MODEL_TENSOR.ATTN_POST_NORM: (
@@ -339,6 +347,7 @@ class TensorNameMap:
             "encoder.layers.{bid}.mlp.dense_h_to_4h",                 # chatglm
             "transformer.h.{bid}.mlp.c_fc_1",                         # exaone
             "model.layers.{bid}.feed_forward.up_proj",                # llama4
+            "decoder.layers.{bid}.fc1",                               # opt
         ),
 
         MODEL_TENSOR.FFN_UP_EXP: (
@@ -420,6 +429,7 @@ class TensorNameMap:
             "encoder.layers.{bid}.mlp.dense_4h_to_h",                 # chatglm
             "model.layers.h.{bid}.mlp.c_proj",                        # exaone
             "model.layers.{bid}.feed_forward.down_proj",              # llama4
+            "decoder.layers.{bid}.fc2",                               # opt
         ),
 
         MODEL_TENSOR.FFN_DOWN_EXP: (
@@ -467,7 +477,8 @@ class TensorNameMap:
             "encoder.layers.{bid}.norm2",                   # nomic-bert
             "transformer.decoder_layer.{bid}.rms_norm_3",   # Grok
             "encoder.layer.{bid}.mlp.layernorm",            # jina-bert-v2
-            "encoder.layer.{bid}.layer_norm_2"              # jina-v2-code
+            "encoder.layer.{bid}.layer_norm_2",             # jina-v2-code
+            "decoder.layers.{bid}.final_layer_norm",        # opt
         ),
 
         MODEL_TENSOR.SSM_IN: (
