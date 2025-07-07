@@ -41,6 +41,7 @@ enum llm_ffn_gate_type {
     LLM_FFN_SEQ,
     LLM_FFN_PAR, // ffn_gate is parallel to ffn_up
     LLM_FFN_SYM, // ffn_gate is parallel to ffn_up and should pass through an activation function
+    LLM_FFN_NOGATE,
 };
 
 enum llm_norm_type {

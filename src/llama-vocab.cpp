@@ -424,6 +424,12 @@ struct llm_tokenizer_bpe : llm_tokenizer {
                     "(?:'[sS]|'[tT]|'[rR][eE]|'[vV][eE]|'[mM]|'[lL][lL]|'[dD])|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}{1}| ?[^\\s\\p{L}\\p{N}\\r\\n]+|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+",
                 };
                 break;
+            case LLAMA_VOCAB_PRE_TYPE_OPT:
+                regex_exprs = {
+                    // 这是 HuggingFace 的 GPT2/OPT tokenizer 正则
+                    R"(\s+'s|\s+'t|\s+'re|\s+'ve|\s+'m|\s+'ll|\s+'d| ?\p{L}+| ?\p{N}+| ?[^ \s\p{L}\p{N}]+)"
+                };
+                break;
             default:
                 // default regex for BPE tokenization pre-processing
                 regex_exprs = {
@@ -1649,6 +1655,10 @@ void llama_vocab::impl::load(llama_model_loader & ml, const LLM_KV & kv) {
             } else if (
                 tokenizer_pre == "seed-coder") {
                 pre_type = LLAMA_VOCAB_PRE_TYPE_SEED_CODER;
+                clean_spaces = false;
+            } else if (
+                tokenizer_pre == "opt") {
+                pre_type = LLAMA_VOCAB_PRE_TYPE_OPT;
                 clean_spaces = false;
             } else {
                 throw std::runtime_error(format("unknown pre-tokenizer type: '%s'", tokenizer_pre.c_str()));
