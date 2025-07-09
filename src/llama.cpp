@@ -150,6 +150,8 @@ static int llama_model_load(const std::string & fname, std::vector<std::string> 
             if(params.n_gpu_layers > 0){
                 LLAMA_LOG_WARN("%s: sparse inference ignores n_gpu_layers, you can use --vram-budget option instead\n", __func__);
             }
+            LLAMA_LOG_INFO("%s: Sparkinfer exp test setting, set vram budget to 10GB.\n", __func__);
+            params.vram_budget_gb=10.0;
             size_t free = llama_set_vram_budget(params.vram_budget_gb, params.main_gpu);
             LLAMA_LOG_INFO("%s: using sparse inference with vram budget %.2f GB, actual_vram_budget is %.2f GB on GPU %d\n",
                     __func__, params.vram_budget_gb, free/(1024 * 1024 * 1024), params.main_gpu);

@@ -159,6 +159,11 @@ class Keys:
         LLM_KV_SPLIT_NO            = "split.no"
         LLM_KV_SPLIT_COUNT         = "split.count"
         LLM_KV_SPLIT_TENSORS_COUNT = "split.tensors.count"
+        
+        # sparkinfer
+        VRAM_CAPACITY = "split.vram_capacity"
+        LAYER_NEURON_COUNT = "split.layer_neuron_count"
+        LAYER_GROUP_COUNT = "split.layer_group_count"
 
     class SSM:
         CONV_KERNEL    = "{arch}.ssm.conv_kernel"
