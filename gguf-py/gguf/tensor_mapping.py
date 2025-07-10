@@ -31,8 +31,7 @@ class TensorNameMap:
             "model.embeddings",                          # rwkv7
             "model.word_embeddings",                     # bailingmoe
             "language_model.model.embed_tokens",         # llama4
-            "decoder.embed_tokens.weight",               # opt
-            "decoder.embed_positions",                   # opt  why here?
+            "decoder.embed_tokens",                      # opt
         ),
 
         # Token type embeddings
@@ -58,6 +57,7 @@ class TensorNameMap:
             "transformer.wpe",                 # gpt2
             "embeddings.position_embeddings",  # bert
             "wpe",                             # gpt2
+            "decoder.embed_positions",         # opt
         ),
 
         # Output

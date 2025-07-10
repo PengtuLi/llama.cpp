@@ -231,6 +231,7 @@ class ModelBase:
 
     def map_tensor_name(self, name: str, try_suffixes: Sequence[str] = (".weight", ".bias")) -> str:
         new_name = self.tensor_map.get_name(key=name, try_suffixes=try_suffixes)
+        # print(f"mapping tensor name: {name} -> {new_name}")
         if new_name is None:
             raise ValueError(f"Can not map tensor {name!r}")
         return new_name
@@ -526,7 +527,7 @@ class TextModel(ModelBase):
             self.gguf_writer.add_embedding_length(n_embd)
             logger.info(f"gguf: embedding length = {n_embd}")
 
-        if (n_ff := self.find_hparam(["intermediate_size", "n_inner"], optional=True)) is not None:
+        if (n_ff := self.find_hparam(["intermediate_size", "n_inner", "ffn_dim"], optional=True)) is not None:
             self.gguf_writer.add_feed_forward_length(n_ff)
             logger.info(f"gguf: feed forward length = {n_ff}")
 
@@ -2113,7 +2114,11 @@ class OPTModel(TextModel):
     def modify_tensors(self, data_torch: Tensor, name: str, bid: int | None) -> Iterable[tuple[str, Tensor]]:
         n_head = self.hparams["num_attention_heads"]
         n_kv_head = self.hparams.get("num_key_value_heads")
-        
+
+        '''llamacpp require pos_embed shape [4096,2048], but hf has [2050,4096], so we cut it off'''
+        if name == "decoder.embed_positions.weight":
+            data_torch = data_torch[:2048, :]   
+
         if self.undo_permute:
             if name.endswith(("q_proj.weight", "q_proj.bias")):
                 data_torch = OPTModel.permute(data_torch, n_head, n_head)

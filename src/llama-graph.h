@@ -41,6 +41,7 @@ enum llm_ffn_gate_type {
     LLM_FFN_SEQ,
     LLM_FFN_PAR, // ffn_gate is parallel to ffn_up
     LLM_FFN_SYM, // ffn_gate is parallel to ffn_up and should pass through an activation function
+    LLM_FFN_NOGATE,
 };
 
 enum llm_norm_type {
@@ -495,11 +496,18 @@ struct llm_graph_context {
 
 // Offload_TODO: we need offload relevant tensors for offloading, e.g gpu_bucket
     ggml_tensor * build_sparse_ffn(
-            ggml_tensor * cur,
+            ggml_tensor * input,
             ggml_tensor * pred_up,
             ggml_tensor * pred_up_b,
             ggml_tensor * pred_down,
             ggml_tensor * pred_down_b,
+
+            ggml_tensor * pred_up_0,
+            ggml_tensor * pred_up_b_0,
+            ggml_tensor * pred_down_0,
+            ggml_tensor * pred_down_b_0,
+
+            ggml_tensor *& sparse_idx_cross_layer,
 
             ggml_tensor * up,
             ggml_tensor * up_b,
