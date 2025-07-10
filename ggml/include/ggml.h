@@ -1159,14 +1159,14 @@ extern "C" {
             struct ggml_tensor  * a,
             struct ggml_tensor  * b);
 
-    GGML_API struct ggml_tensor * ggml_mul_mat_sparse_gpu(
+    GGML_API struct ggml_tensor * ggml_mul_mat_sparse(
         struct ggml_context * ctx,
         struct ggml_tensor  * a,
         struct ggml_tensor  * b,
         struct ggml_tensor  * sparse_idx,
         struct ggml_tensor  * gpu_bucket);
 
-    GGML_API struct ggml_tensor * ggml_mul_mat_sparse_cpu(
+    GGML_API struct ggml_tensor * ggml_axpy_sparse(
         struct ggml_context * ctx,
         struct ggml_tensor  * a,
         struct ggml_tensor  * b,

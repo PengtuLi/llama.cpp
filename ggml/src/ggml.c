@@ -2780,20 +2780,23 @@ struct ggml_tensor * ggml_mul_mat(
     return result;
 }
 
-struct ggml_tensor * ggml_mul_mat_sparse_gpu(
+
+struct ggml_tensor * ggml_mul_mat_sparse(
         struct ggml_context * ctx,
         struct ggml_tensor  * a,
         struct ggml_tensor  * b,
         struct ggml_tensor  * sparse_idx,
+        // Under hybrid inference, this tensor is to indicate which row are offloaded to GPU;
+        // When using full GPU inference, it is NULL.
         struct ggml_tensor  * neurons_indice) {
 
     GGML_ASSERT(ggml_can_mul_mat(a, b));
     GGML_ASSERT(!ggml_is_transposed(a));
 
     const int64_t ne[4] = { a->ne[1], b->ne[1], b->ne[2], b->ne[3] };
-    struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F32, 4, ne);
+    struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F32, GGML_MAX_DIMS, ne);
 
-    result->op   = GGML_OP_MUL_MAT;   // GTODO: currently we havnt build sparse kernels, so we fallback to dense mulmat
+    result->op   = GGML_OP_MUL_MAT; // GTODO: currently we havnt build sparse kernels, so we fallback to dense mulmat
     result->src[0] = a;
     result->src[1] = b;
     result->src[2] = sparse_idx;
@@ -2802,13 +2805,11 @@ struct ggml_tensor * ggml_mul_mat_sparse_gpu(
     return result;
 }
 
-struct ggml_tensor * ggml_mul_mat_sparse_cpu(
+struct ggml_tensor * ggml_axpy_sparse(
         struct ggml_context * ctx,
         struct ggml_tensor  * a,
         struct ggml_tensor  * b,
         struct ggml_tensor  * sparse_idx,
-        // Under hybrid inference, this tensor is to indicate which row are offloaded to GPU;
-        // When using full GPU inference, it is NULL.
         struct ggml_tensor  * neurons_indice) {
 
     GGML_ASSERT(ggml_can_mul_mat(a, b));

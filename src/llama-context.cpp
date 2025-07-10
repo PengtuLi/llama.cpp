@@ -977,6 +977,7 @@ int llama_context::decode(llama_batch & inp_batch) {
         ggml_backend_sched_reset(sched.get());
         ggml_backend_sched_set_eval_callback(sched.get(), cparams.cb_eval, cparams.cb_eval_user_data);
 
+        // GTODO : build graph -> backend sched -> compute
         auto * gf = graph_init();
         auto res = graph_build(ctx_compute.get(), gf, ubatch, LLM_GRAPH_TYPE_DECODER);
 
