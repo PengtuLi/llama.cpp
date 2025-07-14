@@ -21,6 +21,8 @@
 #include "ggml-cuda/im2col.cuh"
 #include "ggml-cuda/mmq.cuh"
 #include "ggml-cuda/mmv.cuh"
+#include "ggml-cuda/mmv_sparse.cuh"
+#include "ggml-cuda/mmb_sparse.cuh"
 #include "ggml-cuda/mmvq.cuh"
 #include "ggml-cuda/norm.cuh"
 #include "ggml-cuda/opt-step-adamw.cuh"
@@ -1407,6 +1409,17 @@ static void ggml_cuda_op_mul_mat(
     const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, ggml_cuda_op_mul_mat_t op,
     quantize_cuda_t quantize_src1) {
 
+    // if(dst->src[2]){
+    // const ggml_backend_buffer_t buf = dst->src[2]->buffer;
+    // printf(">>> sparse_idx '%s' backend is CUDA? %d, usage = %d, data ptr = %p, extra = %p\n",
+    //     dst->src[2]->name,
+    //     ggml_backend_buffer_is_cuda(buf),
+    //     ggml_backend_buffer_get_usage(buf),
+    //     dst->src[2]->data,
+    //     dst->src[2]->extra
+    //     );
+    // }
+
     const int64_t ne00 = src0->ne[0];
     const int64_t ne01 = src0->ne[1];
     const int64_t ne02 = src0->ne[2];
@@ -1421,7 +1434,12 @@ static void ggml_cuda_op_mul_mat(
     const int64_t ne0 = dst->ne[0];
     const int64_t ne1 = dst->ne[1];
 
-    // const int64_t nb10 = src1->nb[0];
+    // printf("tensor_name: %s\n", dst->name);
+    // printf("sc0: %d, %d, %d, %d\n", ne00, ne01, ne02, ne03);  // 4096, 11008, 1, 1
+    // printf("sc1: %d, %d, %d, %d, nrows1: %d\n", ne10, ne11, ne12, ne13, nrows1); // 4096, 1, 1, 1, nrows1: 1
+    // printf("dst: %d, %d\n\n", ne0, ne1); // 11008, 1
+
+    const int64_t nb10 = src1->nb[0];
     const int64_t nb11 = src1->nb[1];
     const int64_t nb12 = src1->nb[2];
     const int64_t nb13 = src1->nb[3];
@@ -1450,9 +1468,10 @@ static void ggml_cuda_op_mul_mat(
     const bool src0_is_contiguous = ggml_is_contiguous(src0);
     const bool src1_is_contiguous = ggml_is_contiguous(src1);
 
-    const int64_t src1_padded_col_size = GGML_PAD(ne10, MATRIX_ROW_PADDING);
+    const int64_t src1_padded_col_size = GGML_PAD(ne10, MATRIX_ROW_PADDING); // 将 ne10 补齐到 MATRIX_ROW_PADDING 的倍数
+    //printf("padded: %d\n", src1_padded_col_size); // 
 
-    const bool split = ggml_backend_buft_is_cuda_split(src0->buffer->buft);
+    const bool split = ggml_backend_buft_is_cuda_split(src0->buffer->buft); // false in sparkinfer, cause we only have one GPU
     GGML_ASSERT(!(split && ne02 > 1));
     GGML_ASSERT(!(split && ne03 > 1));
     GGML_ASSERT(!(split && ne02 < ne12));
@@ -1468,7 +1487,7 @@ static void ggml_cuda_op_mul_mat(
     }
 
     struct dev_data {
-        int cc;
+        int cc; // cuda devices count
 
         ggml_cuda_pool_alloc<char>   src0_dd_alloc;
         ggml_cuda_pool_alloc<float> src1_ddf_alloc;
@@ -1530,6 +1549,7 @@ static void ggml_cuda_op_mul_mat(
         cudaStream_t stream = ctx.stream(id, 0);
 
         if (src0_is_contiguous) {
+            // printf("src0_is_contiguous\n"); -> yes
             dev[id].src0_dd = split ? (char *) src0_extra->data_device[id] : (char *) src0->data;
         } else {
             // If src0 is not contiguous it will be copied to a temporary buffer.
@@ -1540,7 +1560,7 @@ static void ggml_cuda_op_mul_mat(
             CUDA_CHECK(cudaMemsetAsync(dev[id].src0_dd, 0, nbytes_data + nbytes_padding, stream));
         }
 
-        // If src0 is on a temporary compute buffer (partial offloading) there may be some padding that needs to be cleared:
+        // If src0 is on a temporary compute buffer (partial offloading) there may be some padding that needs to be cleared: sparkinfer: no
         if (ne00 % MATRIX_ROW_PADDING != 0 && ggml_is_quantized(src0->type) && ggml_backend_buffer_get_usage(src0->buffer) == GGML_BACKEND_BUFFER_USAGE_COMPUTE && src0->view_src == nullptr) {
             GGML_ASSERT(ggml_is_contiguously_allocated(src0));
             GGML_ASSERT(!src0->view_src);
@@ -1981,7 +2001,23 @@ static void ggml_cuda_mul_mat(ggml_backend_cuda_context & ctx, const ggml_tensor
     } else if (use_mul_mat_q) {
         ggml_cuda_op_mul_mat(ctx, src0, src1, dst, ggml_cuda_op_mul_mat_q, quantize_mmq_q8_1_cuda);
     } else {
+        ggml_cuda_op_mul_mat(ctx, src0, src1, dst, ggml_cuda_op_mul_mat_cublas, nullptr);  // token-level batch compute will be fallback to here, calling out cublasGEMM...
+    }
+}
+
+static void ggml_cuda_mul_mat_sparse(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
+    GGML_ASSERT(dst->src[2] != NULL && "dst->src[2] must be present for sparse matrix multiplication");
+    if (src1->ne[1] == 1) {
+        switch(src0->type) {
+            case GGML_TYPE_F16:
+                ggml_cuda_op_mul_mat(ctx, src0, src1, dst, ggml_cuda_op_mul_mat_vec_sparse, nullptr);
+                break;
+            default:
+                GGML_ASSERT(false && "unsupported type for sparse matrix multiplication"); //GTODO: do we need to support quantized type mm?
+        }
+    } else {
         ggml_cuda_op_mul_mat(ctx, src0, src1, dst, ggml_cuda_op_mul_mat_cublas, nullptr);
+        // ggml_cuda_op_mul_mat(ctx, src0, src1, dst, ggml_cuda_op_mul_mat_batch_sparse, nullptr);  GTODO: we havent debug batch kernel, use this would encounter bugs, fixed it later
     }
 }
 
@@ -2263,8 +2299,10 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
             ggml_cuda_op_rms_norm_back(ctx, dst);
             break;
         case GGML_OP_MUL_MAT:
-        case GGML_OP_MUL_MAT_SPARSE:  // GTODO: currently we havnt build sparse kernels, so we fallback to dense mulmat
             ggml_cuda_mul_mat(ctx, dst->src[0], dst->src[1], dst);
+            break;
+        case GGML_OP_MUL_MAT_SPARSE:
+            ggml_cuda_mul_mat_sparse(ctx, dst->src[0], dst->src[1], dst);
             break;
         case GGML_OP_MUL_MAT_ID:
             ggml_cuda_mul_mat_id(ctx, dst);
@@ -2998,6 +3036,7 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
             break;
         case GGML_OP_MUL_MAT:
         case GGML_OP_MUL_MAT_ID:
+        case GGML_OP_MUL_MAT_SPARSE:
             {
                 struct ggml_tensor * a = op->src[0];
                 struct ggml_tensor * b = op->src[1];
@@ -3278,6 +3317,7 @@ static int64_t get_op_batch_size(const ggml_tensor * op) {
         case GGML_OP_GET_ROWS:
             return 0;
         case GGML_OP_MUL_MAT:
+        case GGML_OP_MUL_MAT_SPARSE:
             return op->ne[1];
         case GGML_OP_MUL_MAT_ID:
         case GGML_OP_ROPE:

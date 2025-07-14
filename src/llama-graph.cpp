@@ -689,8 +689,9 @@ ggml_tensor * llm_graph_context::build_ffn(
 ggml_tensor * llm_graph_context::build_sparse_mul_mat(
              ggml_tensor * cur,
              ggml_tensor * weight,              // dense weight, it should be on cpu for cpu computing
-             ggml_tensor * gpu_weight,         // sliced weight that offloaded on gpu
-             ggml_tensor * neurons_indice,    // the neurons indice of gpu_weight
+             ggml_tensor * gpu_weight,         // weight that offloaded on gpu
+             ggml_tensor * gpu_neu_idx,       // the neurons indice of gpu_weight, more useful in cuda operation
+             ggml_tensor * gpu_neu_mask,     // the mask indicates which neuron is on gpu(1) or cpu(0), more useful in cpu operation
              ggml_tensor * sparse_idx,
               const char * name,
                      int   il
@@ -700,13 +701,13 @@ ggml_tensor * llm_graph_context::build_sparse_mul_mat(
 
     // GTODO : do we need specific implement of full_gpu? yes
 
-    out = ggml_mul_mat_sparse(ctx0, weight, cur, sparse_idx, neurons_indice);
+    out = ggml_mul_mat_sparse(ctx0, weight, cur, sparse_idx, gpu_neu_mask);
     cb(out, full_name.c_str(), il);
 
 #ifdef GGML_USE_CUDA
     if (gpu_weight)
     {
-        ggml_tensor * out_gpu = ggml_mul_mat_sparse(ctx0, gpu_weight, cur, sparse_idx, neurons_indice);
+        ggml_tensor * out_gpu = ggml_mul_mat_sparse(ctx0, gpu_weight, cur, sparse_idx, gpu_neu_idx);
         // ggml_cuda_assign_buffers_no_alloc(out_gpu); GTODO: from powerinfer, wtf is this, do we need it??
         cb(out_gpu, (full_name + "_gpu").c_str(), il);
 
@@ -724,7 +725,8 @@ ggml_tensor * llm_graph_context::build_sparse_axpy(
              ggml_tensor * cur,
              ggml_tensor * weight,              // dense weight, it should be on cpu for cpu computing
              ggml_tensor * gpu_weight,         // sliced weight that offloaded on gpu
-             ggml_tensor * neurons_indice,    // the neurons indice of gpu_weight
+             ggml_tensor * gpu_neu_idx,       // the neurons indice of gpu_weight, more useful in cuda operation
+             ggml_tensor * gpu_neu_mask,     // the mask indicates which neuron is on gpu(1) or cpu(0), more useful in cpu operation
              ggml_tensor * sparse_idx,
               const char * name,
                      int   il
@@ -734,12 +736,12 @@ ggml_tensor * llm_graph_context::build_sparse_axpy(
 
     // GTODO : do we need specific implement of full_gpu? 
 
-    out = ggml_axpy_sparse(ctx0, weight, cur, sparse_idx, neurons_indice);
+    out = ggml_axpy_sparse(ctx0, weight, cur, sparse_idx, gpu_neu_mask);
     cb(out, full_name.c_str(), il);
 
 #ifdef GGML_USE_CUDA
     if (gpu_weight) {
-        ggml_tensor * out_gpu = ggml_axpy_sparse(ctx0, weight, cur, sparse_idx, neurons_indice);
+        ggml_tensor * out_gpu = ggml_axpy_sparse(ctx0, weight, cur, sparse_idx, gpu_neu_idx);
         // ggml_cuda_assign_buffers_no_alloc(out_gpu); GTODO: from powerinfer, wtf is this, do we need it??
         cb(out_gpu, (full_name + "_gpu").c_str(), il);
 
@@ -778,7 +780,8 @@ ggml_tensor * llm_graph_context::build_sparse_ffn(
          ggml_tensor * gpu_gate,
          ggml_tensor * gpu_down,
          
-         ggml_tensor * neu_idx,
+         ggml_tensor * gpu_neu_mask,
+         ggml_tensor * gpu_neu_idx,
    llm_ffn_gate_type   type_gate,
                  int   il) const{          
         // predictor GTODO: add net-layer predictor logit
@@ -789,7 +792,7 @@ ggml_tensor * llm_graph_context::build_sparse_ffn(
             sparse_idx = ggml_mul_mat(ctx0, pred_up_0, input);
             cb(sparse_idx, "pred_up", il);
 
-            if(pred_up_b){
+            if(pred_up_b_0){
                 sparse_idx = ggml_add(ctx0, sparse_idx, pred_up_b_0);
                 cb(sparse_idx, "pred_up_b", il);
             }
@@ -800,25 +803,31 @@ ggml_tensor * llm_graph_context::build_sparse_ffn(
             sparse_idx = ggml_mul_mat(ctx0, pred_down_0, sparse_idx);
             cb(sparse_idx, "pred_down", il);
 
-            if(pred_down_b){
+            if(pred_down_b_0){
                 sparse_idx = ggml_add(ctx0, sparse_idx, pred_down_b_0);
                 cb (sparse_idx, "pred_down_b", il);
-            }      
+            }  
         }else{
             sparse_idx = sparse_idx_cross_layer;
         }
 
+        sparse_idx = ggml_sigmoid(ctx0, sparse_idx);
+        cb(sparse_idx, "pred_out", il);
+
+        ggml_tensor * sparse_idx_for_next = ggml_dup(ctx0, sparse_idx); // dup for next layer
+        cb(sparse_idx_for_next, "pred_out_dup", il);
+
         // sparse_ffn  GTODO: use integrated kernel?
         ggml_tensor * cur = nullptr;
         {
-            ggml_tensor * up_out = build_sparse_mul_mat(input, up, gpu_up, neu_idx, sparse_idx, "up", il); 
+            ggml_tensor * up_out = build_sparse_mul_mat(input, up, gpu_up, gpu_neu_idx, gpu_neu_mask, sparse_idx, "up", il); 
             if(up_b){
                 up_out = ggml_add(ctx0, up_out, up_b);
                 cb(up_out, "fnn_up_b", il);
             }
 
             if(gate){
-                ggml_tensor * gate_out = build_sparse_mul_mat(input, gate, gpu_gate, neu_idx, sparse_idx, "gate", il); 
+                ggml_tensor * gate_out = build_sparse_mul_mat(input, gate, gpu_gate, gpu_neu_idx, gpu_neu_mask, sparse_idx, "gate", il); 
                 
                 if(gate_b){
                     gate_out = ggml_add(ctx0, gate_out, gate_b);
@@ -841,7 +850,7 @@ ggml_tensor * llm_graph_context::build_sparse_ffn(
                 cur = up_out;
             }
 
-            cur = build_sparse_axpy(cur, down, gpu_down, neu_idx, sparse_idx, "down", il); 
+            cur = build_sparse_axpy(cur, down, gpu_down, gpu_neu_idx, gpu_neu_mask, sparse_idx, "down", il); 
 
             if (down_b) {
                 cur = ggml_add(ctx0, cur, down_b);
@@ -849,33 +858,33 @@ ggml_tensor * llm_graph_context::build_sparse_ffn(
             }
         }
         
-        // predictor and reload for next layer
-        if (il != n_layer-1)
-        {
-            // generate next-layer sparse-idx 
-            sparse_idx = ggml_mul_mat(ctx0, pred_up, input);
-            cb(sparse_idx, "pred_up", il);
+        if (il != n_layer - 1) {
+            // 用通用的 pred_up/pred_down 计算
+            ggml_tensor * next_idx = ggml_mul_mat(ctx0, pred_up, input);
+            cb(next_idx, "pred_up", il+1);
+            
+            if (pred_up_b) {
+                next_idx = ggml_add(ctx0, next_idx, pred_up_b);
+                cb(next_idx, "pred_up_b", il+1);
+            }
+            
+            next_idx = ggml_relu(ctx0, next_idx);
+            cb(next_idx, "pred_relu", il+1);
 
-            if(pred_up_b){
-                sparse_idx = ggml_add(ctx0, sparse_idx, pred_up_b);
-                cb(sparse_idx, "pred_up_b", il);
+            next_idx = ggml_mul_mat(ctx0, pred_down, next_idx);
+            cb(next_idx, "pred_down", il+1);
+            
+            if (pred_down_b) {
+                next_idx = ggml_add(ctx0, next_idx, pred_down_b);
+                cb(next_idx, "pred_down_b", il+1);
             }
 
-            sparse_idx = ggml_relu(ctx0, sparse_idx);
-            cb(sparse_idx, "pred_relu",il);
+            next_idx = ggml_sigmoid(ctx0, next_idx);
+            cb(next_idx, "pred_out", il+1);
 
-            sparse_idx = ggml_mul_mat(ctx0, pred_down, sparse_idx);
-            cb(sparse_idx, "pred_down", il);
-
-            if(pred_down_b){
-                sparse_idx = ggml_add(ctx0, sparse_idx, pred_down_b);
-                cb(sparse_idx, "pred_down_b", il);
-            }
-
-            sparse_idx_cross_layer = sparse_idx; // update cross-layer sparse_idx
-
-            // GTODO: reload next-layer neurons
-
+            // dup for next layer
+            sparse_idx_cross_layer = ggml_dup(ctx0, next_idx);
+            cb(sparse_idx_cross_layer, "pred_out_dup", il+1);
         }
         
         return cur;

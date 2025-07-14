@@ -520,7 +520,8 @@ struct llm_graph_context {
             ggml_tensor * gpu_gate,
             ggml_tensor * gpu_down,
             
-            ggml_tensor * neu_idx,
+            ggml_tensor * gpu_neu_mask,
+            ggml_tensor * gpu_neu_idx,
     llm_ffn_gate_type   type_gate,
                     int   il
     ) const;
@@ -529,7 +530,8 @@ struct llm_graph_context {
              ggml_tensor * cur,
              ggml_tensor * weight,              // dense weight 
              ggml_tensor * gpu_weight,         // weight that offloaded on gpu
-             ggml_tensor * neurons_indice,    // the neurons indice of gpu_weight
+             ggml_tensor * gpu_neu_idx,       // the neurons indice of gpu_weight
+             ggml_tensor * gpu_neu_mask,     // the mask indicates which neuron is on gpu(1) or cpu(0)
              ggml_tensor * sparse_idx,
               const char * name,
                      int   il
@@ -539,7 +541,8 @@ struct llm_graph_context {
              ggml_tensor * cur,
              ggml_tensor * weight,              // dense weight 
              ggml_tensor * gpu_weight,         // weight that offloaded on gpu
-             ggml_tensor * neurons_indice,    // the neurons indice of gpu_weight
+             ggml_tensor * gpu_neu_idx,       // the neurons indice of gpu_weight
+             ggml_tensor * gpu_neu_mask,     // the mask indicates which neuron is on gpu(1) or cpu(0)
              ggml_tensor * sparse_idx,
               const char * name,
                      int   il
