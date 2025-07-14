@@ -430,6 +430,7 @@ void llama_model::load_hparams(llama_model_loader & ml) {
         const std::string value = gguf_kv_to_str(ctx, i);
         gguf_kv.emplace(name, value);
     }
+    printf("\n\n111111111\n\n");
 
     // get general kv
     ml.get_key(LLM_KV_GENERAL_NAME, name, false);
@@ -2626,14 +2627,6 @@ bool llama_model::load_tensors(llama_model_loader & ml) {
                         else {
                             layer.rope_freqs = create_tensor(tn(LLM_TENSOR_ROPE_FREQS, "weight", i), {n_rot/2}, TENSOR_NOT_REQUIRED | (i != 0 ? TENSOR_DUPLICATED : 0));
                         }
-                        
-                        // ffn preds 
-                        layer.ffn_pred_up   = create_tensor(tn(LLM_TENSOR_FFN_PRED_UP, "weight", i), {n_embd,  n_pred_lora}, 0);
-                        layer.ffn_pred_down = create_tensor(tn(LLM_TENSOR_FFN_PRED_DOWN, "weight", i), {n_pred_lora,  n_ff}, 0);
-
-                        // ffn preds bias
-                        layer.ffn_pred_up_b   = create_tensor(tn(LLM_TENSOR_FFN_PRED_UP, "bias", i), {n_pred_lora}, TENSOR_NOT_REQUIRED);
-                        layer.ffn_pred_down_b = create_tensor(tn(LLM_TENSOR_FFN_PRED_DOWN, "bias", i), {n_ff}, TENSOR_NOT_REQUIRED);
                         
                         // ffn
                         layer.ffn_gate = create_tensor(tn(LLM_TENSOR_FFN_GATE, "weight", i), {n_embd,   n_ff}, 0);
@@ -5505,7 +5498,7 @@ struct llm_build_llama : public llm_graph_context {
                             model.layers[il].ffn_gate, model.layers[il].ffn_gate_b,
                             model.layers[il].ffn_down, model.layers[il].ffn_down_b,
                             model.layers[il].ffn_gpu_up, model.layers[il].ffn_gpu_gate, model.layers[il].ffn_gpu_down,
-                            model.layers[il].ffn_neu_idx, 
+                            model.layers[il].ffn_gpu_neu_idx, model.layers[il].ffn_gpu_neu_mask,
                             ffn_gate_type, il);
                     cb(cur, "ffn_out", il);
                 }
@@ -5518,7 +5511,7 @@ struct llm_build_llama : public llm_graph_context {
                             model.layers[il].ffn_gate, model.layers[il].ffn_gate_b,
                             model.layers[il].ffn_down, model.layers[il].ffn_down_b,
                             model.layers[il].ffn_gpu_up, model.layers[il].ffn_gpu_gate, model.layers[il].ffn_gpu_down,
-                            model.layers[il].ffn_neu_idx, 
+                            model.layers[il].ffn_gpu_neu_idx, model.layers[il].ffn_gpu_neu_mask, 
                             ffn_gate_type, il);
                     cb(cur, "ffn_out", il);
                 }
@@ -5532,7 +5525,7 @@ struct llm_build_llama : public llm_graph_context {
                             model.layers[il].ffn_gate, model.layers[il].ffn_gate_b,
                             model.layers[il].ffn_down, model.layers[il].ffn_down_b,
                             model.layers[il].ffn_gpu_up, model.layers[il].ffn_gpu_gate, model.layers[il].ffn_gpu_down,
-                            model.layers[il].ffn_neu_idx, 
+                            model.layers[il].ffn_gpu_neu_idx, model.layers[il].ffn_gpu_neu_mask, 
                             ffn_gate_type, il);
                     cb(cur, "ffn_out", il);
                 }
@@ -5689,6 +5682,7 @@ struct llm_build_opt : public llm_graph_context {
                     LLM_NORM, il);
             cb(cur, "ffn_norm", il);
 
+            // GTODO: seems redundant, optimize it later
             if(use_sparkinfer && il==0){
                 cur = build_sparse_ffn(cur,
                         model.layers[il+1].ffn_pred_up, model.layers[il+1].ffn_pred_up_b,
@@ -5700,7 +5694,7 @@ struct llm_build_opt : public llm_graph_context {
                         NULL, NULL,
                         model.layers[il].ffn_down, model.layers[il].ffn_down_b,
                         model.layers[il].ffn_gpu_up, NULL, model.layers[il].ffn_gpu_down,
-                        model.layers[il].ffn_neu_idx, 
+                        model.layers[il].ffn_gpu_neu_idx, model.layers[il].ffn_gpu_neu_mask, 
                         LLM_FFN_NOGATE, il);
                 cb(cur, "ffn_out", il);
             }
@@ -5713,7 +5707,7 @@ struct llm_build_opt : public llm_graph_context {
                         NULL, NULL,
                         model.layers[il].ffn_down, model.layers[il].ffn_down_b,
                         model.layers[il].ffn_gpu_up, NULL, model.layers[il].ffn_gpu_down,
-                        model.layers[il].ffn_neu_idx, 
+                        model.layers[il].ffn_gpu_neu_idx, model.layers[il].ffn_gpu_neu_mask,
                         LLM_FFN_NOGATE, il);
                 cb(cur, "ffn_out", il);
             }
@@ -5727,7 +5721,7 @@ struct llm_build_opt : public llm_graph_context {
                         NULL, NULL,
                         model.layers[il].ffn_down, model.layers[il].ffn_down_b,
                         model.layers[il].ffn_gpu_up, NULL, model.layers[il].ffn_gpu_down,
-                        model.layers[il].ffn_neu_idx, 
+                        model.layers[il].ffn_gpu_neu_idx, model.layers[il].ffn_gpu_neu_mask, 
                         LLM_FFN_NOGATE, il);
                 cb(cur, "ffn_out", il);
             }

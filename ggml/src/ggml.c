@@ -2786,9 +2786,7 @@ struct ggml_tensor * ggml_mul_mat_sparse(
         struct ggml_tensor  * a,
         struct ggml_tensor  * b,
         struct ggml_tensor  * sparse_idx,
-        // Under hybrid inference, this tensor is to indicate which row are offloaded to GPU;
-        // When using full GPU inference, it is NULL.
-        struct ggml_tensor  * neurons_indice) {
+        struct ggml_tensor  * gpu_neu_idx) {
 
     GGML_ASSERT(ggml_can_mul_mat(a, b));
     GGML_ASSERT(!ggml_is_transposed(a));
@@ -2796,11 +2794,11 @@ struct ggml_tensor * ggml_mul_mat_sparse(
     const int64_t ne[4] = { a->ne[1], b->ne[1], b->ne[2], b->ne[3] };
     struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F32, GGML_MAX_DIMS, ne);
 
-    result->op   = GGML_OP_MUL_MAT; // GTODO: currently we havnt build sparse kernels, so we fallback to dense mulmat
+    result->op   = GGML_OP_MUL_MAT_SPARSE;
     result->src[0] = a;
     result->src[1] = b;
     result->src[2] = sparse_idx;
-    result->src[3] = neurons_indice;
+    result->src[3] = gpu_neu_idx;
 
     return result;
 }
@@ -2810,7 +2808,7 @@ struct ggml_tensor * ggml_axpy_sparse(
         struct ggml_tensor  * a,
         struct ggml_tensor  * b,
         struct ggml_tensor  * sparse_idx,
-        struct ggml_tensor  * neurons_indice) {
+        struct ggml_tensor  * gpu_neu_idx) {
 
     GGML_ASSERT(ggml_can_mul_mat(a, b));
     GGML_ASSERT(!ggml_is_transposed(a));
@@ -2818,11 +2816,11 @@ struct ggml_tensor * ggml_axpy_sparse(
     const int64_t ne[4] = { a->ne[1], b->ne[1], b->ne[2], b->ne[3] };
     struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F32, GGML_MAX_DIMS, ne);
 
-    result->op   = GGML_OP_MUL_MAT; // GTODO: currently we havnt build sparse kernels, so we fallback to dense mulmat
+    result->op   = GGML_OP_MUL_MAT_SPARSE;  // GTODO: currently we havnt build sparse kernels, so we fallback to dense mulmat
     result->src[0] = a;
     result->src[1] = b;
     result->src[2] = sparse_idx;
-    result->src[3] = neurons_indice;
+    result->src[3] = gpu_neu_idx;
 
     return result;
 }
@@ -2832,7 +2830,7 @@ struct ggml_tensor * ggml_axpy(
         struct ggml_tensor  * a,
         struct ggml_tensor  * b,
         struct ggml_tensor  * sparse_idx,
-        struct ggml_tensor  * neurons_indice) {
+        struct ggml_tensor  * gpu_neu_idx) {
 
     GGML_ASSERT(ggml_can_mul_mat(a, b));
     GGML_ASSERT(!ggml_is_transposed(a));
@@ -2844,7 +2842,7 @@ struct ggml_tensor * ggml_axpy(
     result->src[0] = a;
     result->src[1] = b;
     result->src[2] = sparse_idx;
-    result->src[3] = neurons_indice;
+    result->src[3] = gpu_neu_idx;
 
     return result;
 }
@@ -5540,7 +5538,8 @@ static void ggml_compute_backward(
                 ggml_add_or_set(ctx, cgraph, isrc0, ggml_rms_norm_back(ctx, grad, src0, eps));
             }
         } break;
-        case GGML_OP_MUL_MAT: {
+        case GGML_OP_MUL_MAT: 
+        case GGML_OP_MUL_MAT_SPARSE:{
             // https://cs231n.github.io/optimization-2/#staged
             // # forward pass
             // s0 = np.random.randn(5, 10)

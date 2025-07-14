@@ -212,8 +212,8 @@ struct llama_layer {
     struct ggml_tensor * ffn_norm_enc     = nullptr;
 
     // ff preds
-    struct ggml_tensor * ffn_pred_up       = nullptr; 
-    struct ggml_tensor * ffn_pred_down     = nullptr; 
+    struct ggml_tensor * ffn_pred_up         = nullptr; 
+    struct ggml_tensor * ffn_pred_down       = nullptr; 
     struct ggml_tensor * ffn_pred_up_b       = nullptr; 
     struct ggml_tensor * ffn_pred_down_b     = nullptr; 
 
@@ -223,7 +223,8 @@ struct llama_layer {
     struct ggml_tensor * ffn_gpu_up       = nullptr;
 
     // ffn sparse infernece relevant 
-    struct ggml_tensor * ffn_neu_idx      = nullptr;
+    struct ggml_tensor * ffn_gpu_neu_idx      = nullptr;
+    struct ggml_tensor * ffn_gpu_neu_mask     = nullptr;
     
     // ff
     struct ggml_tensor * ffn_gate     = nullptr; // w1

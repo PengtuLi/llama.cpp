@@ -4,18 +4,31 @@
 
 template <typename T, typename type_acc, int block_size>
 static __global__ void mul_mat_vec(
-        const T * __restrict__ x, const float * __restrict__ y, const int32_t * __restrict__ ids, float * __restrict__ dst,
-        const int64_t ncols2, const int64_t nchannels_y, const int64_t stride_row,
-        const int64_t channel_ratio, const int64_t stride_channel_x, const int64_t stride_channel_y, const int64_t stride_channel_dst,
-        const int64_t sample_ratio, const int64_t stride_sample_x, const int64_t stride_sample_y, const int64_t stride_sample_dst) {
-    const int64_t row         = blockIdx.x;
-    const int64_t channel_dst = blockIdx.y;
-    const int64_t channel_x   = ids ? ids[channel_dst]          : channel_dst / channel_ratio;
-    const int64_t channel_y   = ids ? channel_dst % nchannels_y : channel_dst;
-    const int64_t sample_dst  = blockIdx.z;
-    const int64_t sample_x    = sample_dst / sample_ratio;
-    const int64_t sample_y    = sample_dst;
-    const int     tid         = threadIdx.x;
+        const T * __restrict__ x, 
+        const float * __restrict__ y, 
+        const int32_t * __restrict__ ids, 
+        float * __restrict__ dst,
+
+        const int64_t ncols2, 
+        const int64_t nchannels_y, 
+        const int64_t stride_row,
+        const int64_t channel_ratio, 
+        const int64_t stride_channel_x, 
+        const int64_t stride_channel_y, 
+        const int64_t stride_channel_dst,
+        const int64_t sample_ratio, 
+        const int64_t stride_sample_x, 
+        const int64_t stride_sample_y, 
+        const int64_t stride_sample_dst
+        ) {
+    const int64_t row         = blockIdx.x;  // (0, nrows)
+    const int64_t channel_dst = blockIdx.y; // 0
+    const int64_t channel_x   = ids ? ids[channel_dst]          : channel_dst / channel_ratio; // 0
+    const int64_t channel_y   = ids ? channel_dst % nchannels_y : channel_dst; // 0
+    const int64_t sample_dst  = blockIdx.z; // 0
+    const int64_t sample_x    = sample_dst / sample_ratio; // 0
+    const int64_t sample_y    = sample_dst; // 0
+    const int     tid         = threadIdx.x; // (0, 256)
     constexpr int warp_size   = ggml_cuda_get_physical_warp_size();
 
     x   += sample_x  *stride_sample_x   + channel_x  *stride_channel_x   + row*stride_row;
@@ -134,9 +147,9 @@ static void launch_mul_mat_vec_cuda(
     }
 
     const int smem = warp_size*sizeof(float);
-    const dim3 block_nums(nrows, nchannels_dst, nsamples_dst);
-    const dim3 block_dims(block_size_best, 1, 1);
-    switch (block_size_best) {
+    const dim3 block_nums(nrows, nchannels_dst, nsamples_dst); // (neurons_num, 1, 1)
+    const dim3 block_dims(block_size_best, 1, 1); // (256, 1 ,1)
+    switch (block_size_best) { // 256
         case   32: {
             mul_mat_vec<T, type_acc,  32><<<block_nums, block_dims, smem, stream>>>
                 (x, y, ids, dst, ncols/2, nchannels_y, stride_row, channel_ratio, stride_channel_x, stride_channel_y,
@@ -274,9 +287,22 @@ void ggml_cuda_mul_mat_vec(ggml_backend_cuda_context & ctx, const ggml_tensor * 
 
 void ggml_cuda_op_mul_mat_vec(
     ggml_backend_cuda_context & ctx,
-    const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst, const char * src0_dd_i, const float * src1_ddf_i,
-    const char * src1_ddq_i, float * dst_dd_i, const int64_t row_low, const int64_t row_high, const int64_t src1_ncols,
-    const int64_t src1_padded_row_size, cudaStream_t stream) {
+    const ggml_tensor * src0, 
+    const ggml_tensor * src1, 
+    ggml_tensor *       dst, 
+
+    const char *        src0_dd_i, 
+    const float *       src1_ddf_i,
+    const char *        src1_ddq_i, 
+    float *             dst_dd_i, 
+
+    const int64_t       row_low, 
+    const int64_t       row_high, 
+    const int64_t       src1_ncols,
+    const int64_t       src1_padded_row_size, 
+    
+    cudaStream_t        stream) 
+    {
 
     GGML_ASSERT(src1->type == GGML_TYPE_F32);
     GGML_ASSERT(dst->type  == GGML_TYPE_F32);
