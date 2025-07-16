@@ -252,6 +252,7 @@ enum llm_tensor {
     LLM_TENSOR_FFN_PRED_DOWN,
     LLM_TENSOR_FFN_GATE,
     LLM_TENSOR_FFN_DOWN,
+    LLM_TENSOR_FFN_DOWN_T, // transformed down
     LLM_TENSOR_FFN_UP,
     LLM_TENSOR_FFN_ACT,
     LLM_TENSOR_FFN_DOWN_EXP,  // split experts for backward compatibility

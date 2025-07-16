@@ -1,0 +1,20 @@
+[build-system]
+requires = [
+    "flit_core >=3.11,<4",
+]
+build-backend = "flit_core.buildapi"
+
+[project]
+name = "sparkinfer"
+authors = [
+    {name = "xxx", email = "xxx@gmail.com"},
+]
+# 注意：由于 torch 的要求，Python 最低版本已提升
+requires-python = ">=3.9"
+classifiers = ["License :: OSI Approved :: MIT License"]
+version="0.0.1"
+description="sparkinfer.py: Python helpers for Sparkinfer LLM inference engine"
+
+dependencies = [
+    'ordered-set'
+]

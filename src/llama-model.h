@@ -218,17 +218,22 @@ struct llama_layer {
     struct ggml_tensor * ffn_pred_down_b     = nullptr; 
 
     // ffn slice on gpu
-    struct ggml_tensor * ffn_gpu_gate     = nullptr;
-    struct ggml_tensor * ffn_gpu_down     = nullptr;
-    struct ggml_tensor * ffn_gpu_up       = nullptr;
+    struct ggml_tensor * ffn_gpu_gate       = nullptr;
+    struct ggml_tensor * ffn_gpu_down_t     = nullptr; // has been transformed,powerinfer里这个就是转置的，我标明一下
+    struct ggml_tensor * ffn_gpu_up         = nullptr;
 
     // ffn sparse infernece relevant 
-    struct ggml_tensor * ffn_gpu_neu_idx      = nullptr;
-    struct ggml_tensor * ffn_gpu_neu_mask     = nullptr;
+    struct ggml_tensor * ffn_gpu_neu_idx          = nullptr; // on gpu
+    struct ggml_tensor * ffn_gpu_neu_mask         = nullptr;
+    struct ggml_tensor * ffn_gpu_group_idx        = nullptr; // on gpu
+    struct ggml_tensor * ffn_gpu_group_mask       = nullptr;
+    struct ggml_tensor * ffn_neuron_to_group_map  = nullptr;
+    float gpu_offload_ratio = 0.0f;
     
     // ff
     struct ggml_tensor * ffn_gate     = nullptr; // w1
-    struct ggml_tensor * ffn_down     = nullptr; // w2
+    struct ggml_tensor * ffn_down     = nullptr; // w2 // GTODO: don't use this !! this is just for none sparse inference
+    struct ggml_tensor * ffn_down_t   = nullptr; // transformed down !!
     struct ggml_tensor * ffn_up       = nullptr; // w3
     struct ggml_tensor * ffn_gate_enc = nullptr;
     struct ggml_tensor * ffn_down_enc = nullptr;
@@ -344,6 +349,16 @@ struct llama_model {
     llama_hparams hparams = {};
     llama_vocab   vocab;
 
+    // ------ sparkinfer ------
+    size_t ffn_offloaded_bytes = 0; // neuron size of split and offloaded FFN
+    struct ggml_context * ctx_cpu_idx_tensors = nullptr; // for CPU idx tensors
+    struct ggml_context * ctx_gpu_idx_tensors = nullptr; // for GPU idx tensors
+    uint64_t layer_neuron_count = 0;
+    uint64_t layer_group_count = 0;
+    uint64_t layer_group_size = 0;
+    std::vector<ggml_backend_buffer_t> split_idx_allocated_buffers;
+    // ------ sparkinfer ------
+
     struct ggml_tensor * tok_embd   = nullptr;
     struct ggml_tensor * type_embd  = nullptr;
     struct ggml_tensor * pos_embd   = nullptr;
@@ -388,7 +403,7 @@ struct llama_model {
     void load_arch           (llama_model_loader & ml);
     void load_hparams        (llama_model_loader & ml);
     void load_vocab          (llama_model_loader & ml);
-    bool load_sparse_tensors (llama_model_loader & ml,long int vram_budget_gb);
+    bool load_sparse_tensors (llama_model_loader & ml,size_t vram_budget_gb);
     bool load_tensors        (llama_model_loader & ml); // returns false if cancelled by progress_callback
 
     std::string arch_name() const;
