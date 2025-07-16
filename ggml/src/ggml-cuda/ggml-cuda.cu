@@ -23,6 +23,7 @@
 #include "ggml-cuda/mmv.cuh"
 #include "ggml-cuda/mmv_sparse.cuh"
 #include "ggml-cuda/mmb_sparse.cuh"
+#include "ggml-cuda/axpy_sparse.cuh"
 #include "ggml-cuda/mmvq.cuh"
 #include "ggml-cuda/norm.cuh"
 #include "ggml-cuda/opt-step-adamw.cuh"
@@ -2021,6 +2022,17 @@ static void ggml_cuda_mul_mat_sparse(ggml_backend_cuda_context & ctx, const ggml
     }
 }
 
+static void ggml_cuda_axpy_sparse(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
+    GGML_ASSERT(dst->src[2] != NULL && "dst->src[2] must be present for sparse matrix multiplication");
+    switch(src0->type) {
+        case GGML_TYPE_F16:
+            ggml_cuda_op_mul_mat(ctx, src0, src1, dst, ggml_cuda_op_axpy_sparse, nullptr);
+            break;
+        default:
+            GGML_ASSERT(false && "unsupported type for sparse matrix multiplication"); //GTODO: do we need to support quantized type mm?
+    }
+}
+
 static void ggml_cuda_mul_mat_id(ggml_backend_cuda_context & ctx, ggml_tensor * dst) {
     const ggml_tensor * src0 = dst->src[0];
     const ggml_tensor * src1 = dst->src[1];
@@ -2303,6 +2315,9 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
             break;
         case GGML_OP_MUL_MAT_SPARSE:
             ggml_cuda_mul_mat_sparse(ctx, dst->src[0], dst->src[1], dst);
+            break;
+        case GGML_OP_AXPY:
+            ggml_cuda_axpy_sparse(ctx, dst->src[0], dst->src[1], dst);
             break;
         case GGML_OP_MUL_MAT_ID:
             ggml_cuda_mul_mat_id(ctx, dst);
@@ -3038,6 +3053,7 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
         case GGML_OP_MUL_MAT:
         case GGML_OP_MUL_MAT_ID:
         case GGML_OP_MUL_MAT_SPARSE:
+        case GGML_OP_AXPY:
             {
                 struct ggml_tensor * a = op->src[0];
                 struct ggml_tensor * b = op->src[1];
@@ -3319,6 +3335,7 @@ static int64_t get_op_batch_size(const ggml_tensor * op) {
             return 0;
         case GGML_OP_MUL_MAT:
         case GGML_OP_MUL_MAT_SPARSE:
+        case GGML_OP_AXPY:
             return op->ne[1];
         case GGML_OP_MUL_MAT_ID:
         case GGML_OP_ROPE:
