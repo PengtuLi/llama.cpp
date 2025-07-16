@@ -2042,7 +2042,7 @@ class ProSparseLlamaModel(LlamaModel):
     
     def _get_preds_names(self):
         predictor_files = sorted(
-            [f for f in os.listdir(self.dir_mlp_pred) if re.fullmatch(r"L\d+\.pt", f)],
+            [f for f in os.listdir(self.dir_mlp_pred) if re.fullmatch(r"model_\d+\.pt", f)],
             key=lambda x: int(re.search(r"\d+", x).group()) # type: ignore
         )
         for layer_idx, file_name in enumerate(predictor_files):
@@ -2065,10 +2065,17 @@ class ProSparseLlamaModel(LlamaModel):
         for name, data in super().get_tensors():
             yield name, data
 
-    def modify_tensors(self, data_torch: Tensor, name: str, bid: int | None) -> Iterable[tuple[str, Tensor]]:
-        if name.startswith("blk.") and "pred_" in name:
-            return [(name, data_torch)]
-        return super().modify_tensors(data_torch, name, bid)
+    def modify_tensors(self, data_torch: Tensor, name: str, bid: int | None):
+        pairs = super().modify_tensors(data_torch, name, bid)
+
+        out = []
+        # transposed ffn_down to support neurons loading and AXPY
+        for gguf_name, tensor in pairs:
+            if "ffn_down_t" in gguf_name:
+                tensor = tensor.T.contiguous()
+            out.append((gguf_name, tensor))
+
+        return out
 
     def tensor_force_quant(self, name, new_name, bid, n_dims):
         if new_name.startswith("blk.") and "pred_" in new_name:
@@ -2117,7 +2124,12 @@ class OPTModel(TextModel):
 
         '''llamacpp require pos_embed shape [4096,2048], but hf has [2050,4096], so we cut it off'''
         if name == "decoder.embed_positions.weight":
-            data_torch = data_torch[:2048, :]   
+            data_torch = data_torch[:2048, :]
+
+         # transposed ffn_down to support neurons loading and AXPY
+        if "fc2.weight" in name:
+            print("transposing ffn_down")
+            data_torch = data_torch.T.contiguous()
 
         if self.undo_permute:
             if name.endswith(("q_proj.weight", "q_proj.bias")):

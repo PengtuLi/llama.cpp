@@ -677,7 +677,7 @@ TENSOR_NAMES: dict[MODEL_TENSOR, str] = {
     MODEL_TENSOR.PREDICTOR_UP:              "blk.{bid}.ffn_pred_up",
     MODEL_TENSOR.PREDICTOR_DOWN:            "blk.{bid}.ffn_pred_down",  
     MODEL_TENSOR.FFN_GATE:                  "blk.{bid}.ffn_gate",
-    MODEL_TENSOR.FFN_DOWN:                  "blk.{bid}.ffn_down",
+    MODEL_TENSOR.FFN_DOWN:                  "blk.{bid}.ffn_down_t",
     MODEL_TENSOR.FFN_UP:                    "blk.{bid}.ffn_up",
     MODEL_TENSOR.FFN_GATE_SHEXP:            "blk.{bid}.ffn_gate_shexp",
     MODEL_TENSOR.FFN_DOWN_SHEXP:            "blk.{bid}.ffn_down_shexp",
