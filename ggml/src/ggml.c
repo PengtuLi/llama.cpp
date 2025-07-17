@@ -2816,7 +2816,7 @@ struct ggml_tensor * ggml_axpy_sparse(
     const int64_t ne[4] = { a->ne[1], b->ne[1], b->ne[2], b->ne[3] };
     struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F32, GGML_MAX_DIMS, ne);
 
-    result->op   = GGML_OP_MUL_MAT_SPARSE;  // GTODO: currently we havnt build sparse kernels, so we fallback to dense mulmat
+    result->op   = GGML_OP_AXPY;
     result->src[0] = a;
     result->src[1] = b;
     result->src[2] = sparse_idx;
@@ -5539,7 +5539,8 @@ static void ggml_compute_backward(
             }
         } break;
         case GGML_OP_MUL_MAT: 
-        case GGML_OP_MUL_MAT_SPARSE:{
+        case GGML_OP_MUL_MAT_SPARSE:
+        case GGML_OP_AXPY:{
             // https://cs231n.github.io/optimization-2/#staged
             // # forward pass
             // s0 = np.random.randn(5, 10)

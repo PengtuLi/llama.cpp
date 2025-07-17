@@ -2020,6 +2020,10 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
             {
                 ggml_compute_forward_mul_mat(params, tensor);
             } break;
+        case GGML_OP_AXPY:
+            {
+                GGML_ASSERT(false && "GTODO: we havnt support axpy on CPU yet");
+            }
         case GGML_OP_MUL_MAT_ID:
             {
                 ggml_compute_forward_mul_mat_id(params, tensor);
@@ -2906,6 +2910,10 @@ struct ggml_cplan ggml_graph_plan(
                             cur = ggml_row_size(vec_dot_type, ggml_nelements(node->src[1]));
                         }
                     } break;
+                case GGML_OP_AXPY:
+                    {
+                        GGML_ASSERT(false && "GTODO: we havnt support axpy on CPU yet");
+                    }
                 case GGML_OP_MUL_MAT_ID:
                     {
                         cur = 0;

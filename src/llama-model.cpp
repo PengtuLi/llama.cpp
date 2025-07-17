@@ -438,7 +438,6 @@ void llama_model::load_hparams(llama_model_loader & ml) {
         const std::string value = gguf_kv_to_str(ctx, i);
         gguf_kv.emplace(name, value);
     }
-    printf("\n\n111111111\n\n");
 
     // get general kv
     ml.get_key(LLM_KV_GENERAL_NAME, name, false);
@@ -1556,8 +1555,9 @@ struct sparkInfer_layer_cache {
         this->neuron_cache_capacity = initial_gpu_neuron_indices.size();
         if (this->neuron_cache_capacity == 0) return true; // 无需卸载
 
-        const int64_t n_ffn = cpu_ffn_down_t->ne[0]; // FFN intermidiate_dim
-        GGML_ASSERT(neuron_cache_capacity <= n_ffn);
+        const int64_t n_ffn = cpu_ffn_down_t->ne[1]; // FFN intermidiate_dim
+        // LLAMA_LOG_INFO("%s: neuron_cache_capacity: %d, n_ffn: %d\n", __func__, neuron_cache_capacity, n_ffn);
+        GGML_ASSERT(neuron_cache_capacity <= n_ffn && "we required neuron_cache_capacity <= n_ffn");
 
         // 1. 计算并分配ffn buffer size
         const size_t single_mat_size = ggml_backend_buft_get_alloc_size(
@@ -1721,6 +1721,7 @@ struct sparkInfer_neuron_cache_manager {
         for (int i = 0; i < n_layers; ++i) {
             llama_layer &layer = model->layers[i];
             if (layer.gpu_offload_ratio == 0.f || !layer.ffn_gpu_neu_idx) {
+                LLAMA_LOG_INFO("%s: layer %d won't split partial tensor to GPU", __func__, i);
                 continue; // 该层不卸载或没有索引信息
             }
 
