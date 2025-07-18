@@ -1849,6 +1849,9 @@ static struct ggml_tensor * ggml_add_impl(
         struct ggml_tensor  * a,
         struct ggml_tensor  * b,
         bool                  inplace) {
+
+    // printf("ADD:    a->name: %s, ne[0]=%d, ne[1]=%d  b->name: %s, ne[0]=%d, ne[1]=%d\n", a->name, a->ne[0], a->ne[1], b->name, b->ne[0], b->ne[1]);
+
     GGML_ASSERT(ggml_can_repeat(b, a));
 
     struct ggml_tensor * result = inplace ? ggml_view_tensor(ctx, a) : ggml_dup_tensor(ctx, a);
@@ -2787,11 +2790,14 @@ struct ggml_tensor * ggml_mul_mat_sparse(
         struct ggml_tensor  * b,
         struct ggml_tensor  * sparse_idx,
         struct ggml_tensor  * gpu_neu_idx) {
-
+    
     GGML_ASSERT(ggml_can_mul_mat(a, b));
     GGML_ASSERT(!ggml_is_transposed(a));
+    GGML_ASSERT(sparse_idx && "sparse_idx is required for sparse mul_mat");
 
-    const int64_t ne[4] = { a->ne[1], b->ne[1], b->ne[2], b->ne[3] };
+    // printf("MULMAT: a->name: %s, ne[0]=%d, ne[1]=%d  b->name: %s, ne[0]=%d, ne[1]=%d\n", a->name, a->ne[0], a->ne[1], b->name, b->ne[0], b->ne[1]);
+
+    const int64_t ne[4] = { sparse_idx->ne[0], b->ne[1], b->ne[2], b->ne[3] };
     struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F32, GGML_MAX_DIMS, ne);
 
     result->op   = GGML_OP_MUL_MAT_SPARSE;
@@ -2810,10 +2816,11 @@ struct ggml_tensor * ggml_axpy_sparse(
         struct ggml_tensor  * sparse_idx,
         struct ggml_tensor  * gpu_neu_idx) {
 
-    GGML_ASSERT(ggml_can_mul_mat(a, b));
+    // printf("AXPY:   a->name: %s, ne[0]=%d, ne[1]=%d  b->name: %s, ne[0]=%d, ne[1]=%d\n", a->name, a->ne[0], a->ne[1], b->name, b->ne[0], b->ne[1]);
+      
     GGML_ASSERT(!ggml_is_transposed(a));
 
-    const int64_t ne[4] = { a->ne[1], b->ne[1], b->ne[2], b->ne[3] };
+    const int64_t ne[4] = { a->ne[0], b->ne[1], b->ne[2], b->ne[3] };
     struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F32, GGML_MAX_DIMS, ne);
 
     result->op   = GGML_OP_AXPY;
@@ -5857,13 +5864,14 @@ static void ggml_visit_parents(struct ggml_cgraph * cgraph, struct ggml_tensor *
     if (ggml_hash_insert(&cgraph->visited_hash_set, node) == GGML_HASHSET_ALREADY_EXISTS) {
         return;
     }
-
+    // printf("%s: node_name = %s, node_addr = %p\n", __func__, node->name ? node->name : "(null)", node);
     for (int i = 0; i < GGML_MAX_SRC; ++i) {
         const int k =
             (cgraph->order == GGML_CGRAPH_EVAL_ORDER_LEFT_TO_RIGHT) ? i :
             (cgraph->order == GGML_CGRAPH_EVAL_ORDER_RIGHT_TO_LEFT) ? (GGML_MAX_SRC-1-i) :
             /* unknown order, just fall back to using i*/ i;
         if (node->src[k]) {
+            // printf("%s: visiting src[%d] of node %s, addr=%p, src_name %s, src_addr = %p\n", __func__, k, node->name ? node->name : "(null)", node, node->src[k]->name ? node->src[k]->name : "(null)", node->src[k]);
             ggml_visit_parents(cgraph, node->src[k]);
         }
     }

@@ -700,7 +700,7 @@ ggml_tensor * llm_graph_context::build_sparse_mul_mat(
     ggml_tensor * out = nullptr;
 
     // GTODO : do we need specific implement of full_gpu? yes
-
+    GGML_ASSERT(gpu_neu_mask && "gpu_neu_mask is required to be exited");
     out = ggml_mul_mat_sparse(ctx0, weight, cur, sparse_idx, gpu_neu_mask);
     cb(out, full_name.c_str(), il);
 
@@ -741,7 +741,7 @@ ggml_tensor * llm_graph_context::build_sparse_axpy(
 
 #ifdef GGML_USE_CUDA
     if (gpu_weight) {
-        ggml_tensor * out_gpu = ggml_axpy_sparse(ctx0, weight, cur, sparse_idx, gpu_neu_idx);
+        ggml_tensor * out_gpu = ggml_axpy_sparse(ctx0, gpu_weight, cur, sparse_idx, gpu_neu_idx);
         // ggml_cuda_assign_buffers_no_alloc(out_gpu); GTODO: from powerinfer, wtf is this, do we need it??
         cb(out_gpu, (full_name + "_gpu").c_str(), il);
 

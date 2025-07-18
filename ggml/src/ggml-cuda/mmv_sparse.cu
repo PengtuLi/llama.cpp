@@ -102,7 +102,7 @@ static __global__ void mul_mat_vec_sparse(
 
     int gpu_neu = gpu_neu_idx ? gpu_neu_idx[row] : row; // (one of the gpu_neurons index)
     
-    if(sparse_idx[gpu_neu] < 0.5){ // GTODO: do we need sparse_threshold?
+    if(sparse_idx[gpu_neu] < 0.5f){ // GTODO: do we need sparse_threshold?
         if (tid == 0) dst[gpu_neu] = 0.0f; // GTODO: this should be done in initialization. ps: outputs are different if we dont set 0 before return, meaning dst was not initialized as 0 at the beginning?
         return;
     }
