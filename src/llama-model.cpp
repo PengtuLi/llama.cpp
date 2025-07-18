@@ -5980,7 +5980,7 @@ struct llm_build_llama : public llm_graph_context {
                             sparse_idx_cross_layer,
                             model.layers[il].ffn_up,   model.layers[il].ffn_up_b,
                             model.layers[il].ffn_gate, model.layers[il].ffn_gate_b,
-                            model.layers[il].ffn_down, model.layers[il].ffn_down_b,
+                            model.layers[il].ffn_down_t, model.layers[il].ffn_down_b,
                             model.layers[il].ffn_gpu_up, model.layers[il].ffn_gpu_gate, model.layers[il].ffn_gpu_down_t,
                             model.layers[il].ffn_gpu_neu_idx, model.layers[il].ffn_gpu_neu_mask,
                             ffn_gate_type, il);
@@ -5993,7 +5993,7 @@ struct llm_build_llama : public llm_graph_context {
                             sparse_idx_cross_layer,
                             model.layers[il].ffn_up,   model.layers[il].ffn_up_b,
                             model.layers[il].ffn_gate, model.layers[il].ffn_gate_b,
-                            model.layers[il].ffn_down, model.layers[il].ffn_down_b,
+                            model.layers[il].ffn_down_t, model.layers[il].ffn_down_b,
                             model.layers[il].ffn_gpu_up, model.layers[il].ffn_gpu_gate, model.layers[il].ffn_gpu_down_t,
                             model.layers[il].ffn_gpu_neu_idx, model.layers[il].ffn_gpu_neu_mask, 
                             ffn_gate_type, il);
@@ -6007,7 +6007,7 @@ struct llm_build_llama : public llm_graph_context {
                             sparse_idx_cross_layer,
                             model.layers[il].ffn_up,   model.layers[il].ffn_up_b,
                             model.layers[il].ffn_gate, model.layers[il].ffn_gate_b,
-                            model.layers[il].ffn_down, model.layers[il].ffn_down_b,
+                            model.layers[il].ffn_down_t, model.layers[il].ffn_down_b,
                             model.layers[il].ffn_gpu_up, model.layers[il].ffn_gpu_gate, model.layers[il].ffn_gpu_down_t,
                             model.layers[il].ffn_gpu_neu_idx, model.layers[il].ffn_gpu_neu_mask, 
                             ffn_gate_type, il);
@@ -6176,7 +6176,7 @@ struct llm_build_opt : public llm_graph_context {
                         sparse_idx_cross_layer,
                         model.layers[il].ffn_up,   model.layers[il].ffn_up_b,
                         NULL, NULL,
-                        model.layers[il].ffn_down, model.layers[il].ffn_down_b,
+                        model.layers[il].ffn_down_t, model.layers[il].ffn_down_b,
                         model.layers[il].ffn_gpu_up, NULL, model.layers[il].ffn_gpu_down_t,
                         model.layers[il].ffn_gpu_neu_idx, model.layers[il].ffn_gpu_neu_mask, 
                         LLM_FFN_NOGATE, il);
@@ -6189,7 +6189,7 @@ struct llm_build_opt : public llm_graph_context {
                         sparse_idx_cross_layer,
                         model.layers[il].ffn_up,   model.layers[il].ffn_up_b,
                         NULL, NULL,
-                        model.layers[il].ffn_down, model.layers[il].ffn_down_b,
+                        model.layers[il].ffn_down_t, model.layers[il].ffn_down_b,
                         model.layers[il].ffn_gpu_up, NULL, model.layers[il].ffn_gpu_down_t,
                         model.layers[il].ffn_gpu_neu_idx, model.layers[il].ffn_gpu_neu_mask,
                         LLM_FFN_NOGATE, il);
@@ -6203,7 +6203,7 @@ struct llm_build_opt : public llm_graph_context {
                         sparse_idx_cross_layer,
                         model.layers[il].ffn_up,   model.layers[il].ffn_up_b,
                         NULL, NULL,
-                        model.layers[il].ffn_down, model.layers[il].ffn_down_b,
+                        model.layers[il].ffn_down_t, model.layers[il].ffn_down_b,
                         model.layers[il].ffn_gpu_up, NULL, model.layers[il].ffn_gpu_down_t,
                         model.layers[il].ffn_gpu_neu_idx, model.layers[il].ffn_gpu_neu_mask, 
                         LLM_FFN_NOGATE, il);
