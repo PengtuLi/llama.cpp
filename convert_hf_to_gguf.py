@@ -6644,4 +6644,6 @@ if __name__ == '__main__':
  python convert_hf_to_gguf.py /root/autodl-tmp/models/prosparse-llama-2-7b --predictor_path /root/autodl-tmp/models/prosparse-llama-2-7b-predictor --preds_bias --outtype f16  --outfile /root/autodl-tmp/models/spif_pspllama.gguf
  python convert_hf_to_gguf.py /root/autodl-tmp/models/opt-6.7b --predictor_path /root/autodl-tmp/models/opt-6.7b-predictors --preds_bias --outtype f16  --outfile /root/autodl-tmp/models/spif_opt.gguf
 
+
+ python convert_hf_to_gguf.py /share/models/prosparse-llama-2-7b --predictor_path /share/models/lay-back-predictors/prosparse-llama-2-7b --preds_bias --outtype f16  --outfile /share/models/prosparse-7b-gguf-w-our-predictor/prosparse-7b.gguf
 '''
