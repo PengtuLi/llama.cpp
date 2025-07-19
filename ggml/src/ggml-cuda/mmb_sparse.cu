@@ -29,8 +29,9 @@ static __global__ void mul_mat_batch_sparse(
     dst        += nrows * s1col_b;
     sparse_idx += nrows * s1col_b;
 
-    if(sparse_idx[gpu_neu] < 0.5){ // GTODO: do we need sparse_threshold?
+    if(sparse_idx[gpu_neu] < 0.5f){ // GTODO: do we need sparse_threshold?
         //printf("sparse: %d: %f\n", gpu_neu,sparse_idx[gpu_neu]);
+        if (tid == 0) dst[gpu_neu] = 0.0f;
         return;
     }
 

@@ -3,156 +3,123 @@
 #include "mmv_sparse.cuh"
 
 // GTODO: the two kernel are demo kernels for axpy, need to be optimized in the future...
-// the powerinfer kernel: 
-static __device__ void convert_f16(const void * vx, const int ib, const int iqs, dfloat2 & v){
-    const half * x = (const half *) vx;
 
-    // automatic half -> float type cast if dfloat == float
-    v.x = x[ib + iqs + 0];
-    v.y = x[ib + iqs + 1];
-}
+static __global__ void mul_mat_axpy_sparse(
+    const void * __restrict__ vx, 
+    const dfloat * __restrict__ y, 
+    float * __restrict__ dst, 
+    
+    const int ncols, 
+    const int nrows, 
+    
+    const int   * gpu_neu_idx, 
+    const float * sparse_idx
+    ) {
 
-static __global__ void dequantize_mul_mat_axpy_sparse(const void * __restrict__ vx, const dfloat * __restrict__ y, float * __restrict__ dst, const int ncols, const int nrows, const int *lst, const float *idx) {
-    // qk = quantized weights per x block
-    // qr = number of quantized weights per data value in x block
-    const int gpu_row = blockIdx.y*blockDim.y + threadIdx.y; // range from [0,nrows]
-    int qk =1;
-    int qr = 1;
+    const int blk_idx = blockIdx.x;          // block index, range from [0,nrows]
+    const int thds_per_blk = blockDim.x;     // number of threads per block
 
-    if (gpu_row >= nrows) {
-        return;
-    }
-    int row = lst ? lst[gpu_row] : gpu_row;
+    const int neu = gpu_neu_idx ? gpu_neu_idx[blk_idx] : blk_idx;
     const int tid = threadIdx.x; // range from [0,31]
-    short *d = (short *)((char *)vx + ncols * gpu_row * 2);
 
-    if (y[row] == 0)
-        return;
-    if (idx[row] < 0.5f) {
+    if (y[neu] == 0 || sparse_idx[neu] < 0.5f) {
+        // if (tid == 0) dst[gpu_neu] = 0.0f;
         return;
     }
 
     extern __shared__ float shared_dst[]; // TODO:dynamic
-
-    const int iter_stride = 2*32;
-    const int vals_per_iter = iter_stride / 32; // num quantized vals per thread and i iter
-    const int y_offset = qr == 1 ? 1 : qk/2;
+    
+    const int VALS_PER_ITER = 2;   // each iter compute 2 vals consequently, we should not modify this
+    const int   iter_stride = VALS_PER_ITER * thds_per_blk;
 
 // partial sum for each thread
     float tmp = 0.0f;
-    for (int i = 0; i < ncols; i += 32) {
+    for (int i = 0; i < ncols; i += thds_per_blk) {
         shared_dst[i+tid] = 0;
     }
     __syncthreads();
 
     for (int i = 0; i < ncols; i += iter_stride) {
-        const int col = i + vals_per_iter*tid;
-        const int ib = (gpu_row*ncols + col)/qk; // x block index
-        const int iqs = (col%qk)/qr; // x quant index
-        const int iybs = col - col%qk; // y block start index
+        const int col  = i + VALS_PER_ITER*tid;
+        const int vx_i = blk_idx*ncols + col; // vx index, vx was store in "blk_idx way", so indice it with blk_idx
 
-// processing >2 values per i iter is faster for fast GPUs
-#pragma unroll
-        for (int j = 0; j < vals_per_iter; j += 2) {
-            // process 2 vals per j iter
+        dfloat2 v;
+        const half * x = (const half *) vx;
+        v.x = x[vx_i + 0];
+        v.y = x[vx_i + 1];
 
-            // dequantize
-            // for qr = 2 the iqs needs to increase by 1 per j iter because 2 weights per data val
-            dfloat2 v;
-            convert_f16(vx, ib, iqs + j/qr, v);
-
-            // matrix multiplication
-            // for qr = 2 the y index needs to increase by 1 per j iter because of y_offset = qk/2
-            tmp = v.x * y[row];
-            shared_dst[col] = tmp;  // share_dst[col] = tmp
-            tmp = v.y * y[row];
-            shared_dst[col+1] = tmp; // share_dst[col+1] = tmp
-            
-        }
+        // matrix multiplication, process 2 vals per j iter
+        tmp = v.x * y[neu];
+        shared_dst[col] = tmp;  // share_dst[col] = tmp
+        tmp = v.y * y[neu];
+        shared_dst[col+1] = tmp; // share_dst[col+1] = tmp       
     }
     __syncthreads();
 
-    for (int i = 0; i < ncols; i += 32) {
+    for (int i = 0; i < ncols; i += thds_per_blk) {
         atomicAdd(&dst[i+tid], shared_dst[i+tid]);
     }
 }
 
-static __global__ void dequantize_mul_mat_axpy_sparse_batch(const void * __restrict__ vx, const dfloat * __restrict__ y, float * __restrict__ dst, const int ncols, const int nrows, int src1_ne0, int src1_ncols, int *lst, float *idx) {
-    // qk = quantized weights per x block
-    // qr = number of quantized weights per data value in x block
-    const int gpu_row = blockIdx.y*blockDim.y + threadIdx.y;
-    int qk = 1;
-    int qr = 1;
+static __global__ void mul_mat_axpy_sparse_batch(
+    const void * __restrict__ vx, 
+    const dfloat * __restrict__ y, 
+    float * __restrict__ dst, 
+    
+    const int ncols, 
+    const int nrows, 
+    
+    const int   * gpu_neu_idx, 
+    const float * sparse_idx
+    ) {
 
-    if (gpu_row >= nrows) {
+    const int blk_idx   = blockIdx.x;          // block index, range from [0, nrows]
+    const int token_idx = blockIdx.y;         // parallel input index, range from [0, src_ncols]
+    const int thds_per_blk = blockDim.x;     // number of threads per block
+
+    y           += token_idx * ncols;
+    dst         += token_idx * ncols;
+    sparse_idx  += token_idx * nrows;
+
+    const int neu = gpu_neu_idx ? gpu_neu_idx[blk_idx] : blk_idx;
+    const int tid = threadIdx.x; // range from [0,31]
+
+    if (y[neu] == 0 || sparse_idx[neu] < 0.5f) {
+        // if (tid == 0) dst[gpu_neu] = 0.0f;
         return;
     }
-    int row = lst ? lst[gpu_row] : gpu_row;
-    const int bid = blockIdx.y;
 
     extern __shared__ float shared_dst[]; // TODO:dynamic
-
-    const int tid = threadIdx.x;
-
-    const int iter_stride = 2*32;
-    const int vals_per_iter = iter_stride / WARP_SIZE; // num quantized vals per thread and i iter
-    const int y_offset = qr == 1 ? 1 : qk/2;
-    float * loop_idx = idx;
-    dfloat * loop_y = (dfloat *)y;
-    float * loop_dst = dst;
+    
+    const int VALS_PER_ITER = 2;   // each iter compute 2 vals consequently, we should not modify this
+    const int   iter_stride = VALS_PER_ITER * thds_per_blk;
 
 // partial sum for each thread
     float tmp = 0.0f;
-    for (int i = 0; i < ncols; i += 32) {
+    for (int i = 0; i < ncols; i += thds_per_blk) {
         shared_dst[i+tid] = 0;
     }
-    // __syncthreads();
-    for (int col_id = 0; col_id < src1_ncols; col_id++) {
-        __syncthreads();
-        if (loop_idx[row] < 0.5f) {
-            loop_dst += ncols;
-            loop_idx += src1_ne0;
-            loop_y += src1_ne0;
-            continue;
-        }
-        
+    __syncthreads();
 
-        for (int i = 0; i < ncols; i += iter_stride)
-        {
-            const int col = i + vals_per_iter * tid;
-            const int ib = (gpu_row * ncols + col) / qk; // x block index
-            const int iqs = (col % qk) / qr;         // x quant index
-            const int iybs = col - col % qk;         // y block start index
+    for (int i = 0; i < ncols; i += iter_stride) {
+        const int col  = i + VALS_PER_ITER*tid;
+        const int vx_i = blk_idx*ncols + col; // vx index, vx was store in "blk_idx way", so indice it with blk_idx
 
-// processing >2 values per i iter is faster for fast GPUs
-#pragma unroll
-            for (int j = 0; j < vals_per_iter; j += 2)
-            {
-                // process 2 vals per j iter
+        dfloat2 v;
+        const half * x = (const half *) vx;
+        v.x = x[vx_i + 0];
+        v.y = x[vx_i + 1];
 
-                // dequantize
-                // for qr = 2 the iqs needs to increase by 1 per j iter because 2 weights per data val
-                dfloat2 v;
-                convert_f16(vx, ib, iqs + j / qr, v);
+        // matrix multiplication, process 2 vals per j iter
+        tmp = v.x * y[neu];
+        shared_dst[col] = tmp;  // share_dst[col] = tmp
+        tmp = v.y * y[neu];
+        shared_dst[col+1] = tmp; // share_dst[col+1] = tmp       
+    }
+    __syncthreads();
 
-                // matrix multiplication
-                // for qr = 2 the y index needs to increase by 1 per j iter because of y_offset = qk/2
-                tmp = v.x * loop_y[row];
-                shared_dst[iybs + iqs + j / qr + 0] = tmp;
-                tmp = v.y * loop_y[row];
-                shared_dst[iybs + iqs + j / qr + y_offset] = tmp;
-            }
-        }
-        /* __syncthreads(); */
-
-        for (int i = 0; i < ncols; i += 32)
-        {
-            atomicAdd(&loop_dst[i + tid], shared_dst[i + tid]);
-            shared_dst[i+tid] = 0;
-        }
-        loop_dst += ncols;
-        loop_idx += src1_ne0;
-        loop_y += src1_ne0;
+    for (int i = 0; i < ncols; i += thds_per_blk) {
+        atomicAdd(&dst[i+tid], shared_dst[i+tid]);
     }
 }
 
@@ -165,15 +132,15 @@ static void launch_mul_mat_axpy_cuda_sparse(
     // vec_axpy
     if(src_ncols == 1){
         // the lanucher for powerinfer kernel: 
-        const dim3 block_nums(1, nrows, 1);
-        const dim3 block_dims(32, 1, 1);
+        const dim3 block_nums(nrows, 1, 1);
+        const dim3 block_dims(WARP_SIZE, 1, 1);
 
-        dequantize_mul_mat_axpy_sparse<<<block_nums, block_dims, ncols*sizeof(float), stream>>>(x, y, dst, ncols, nrows, gpu_neu_idx, sparse_idx);
+        mul_mat_axpy_sparse<<<block_nums, block_dims, ncols*sizeof(float), stream>>>(x, y, dst, ncols, nrows, gpu_neu_idx, sparse_idx);
     }
     else{ // batch_axpy
-        const dim3 block_nums(1, nrows, 1);
-        const dim3 block_dims(32, 1, 1);
-        dequantize_mul_mat_axpy_sparse<<<block_nums, block_dims, ncols*sizeof(float), stream>>>(x, y, dst, ncols, nrows, gpu_neu_idx, sparse_idx);
+        const dim3 block_nums(nrows, src_ncols, 1);
+        const dim3 block_dims(WARP_SIZE, 1, 1);
+        mul_mat_axpy_sparse_batch<<<block_nums, block_dims, ncols*sizeof(float), stream>>>(x, y, dst, ncols, nrows, gpu_neu_idx, sparse_idx);
         // GGML_ASSERT(false && "GTODO: batch axpy need to be done");
     }
 
