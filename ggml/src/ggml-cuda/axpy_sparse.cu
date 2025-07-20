@@ -1,6 +1,6 @@
 #include "ggml.h"
 #include "common.cuh"
-#include "mmv_sparse.cuh"
+#include "axpy_sparse.cuh"
 
 // GTODO: the two kernel are demo kernels for axpy, need to be optimized in the future...
 
@@ -141,7 +141,6 @@ static void launch_mul_mat_axpy_cuda_sparse(
         const dim3 block_nums(nrows, src_ncols, 1);
         const dim3 block_dims(WARP_SIZE, 1, 1);
         mul_mat_axpy_sparse_batch<<<block_nums, block_dims, ncols*sizeof(float), stream>>>(x, y, dst, ncols, nrows, gpu_neu_idx, sparse_idx);
-        // GGML_ASSERT(false && "GTODO: batch axpy need to be done");
     }
 
 }
@@ -217,22 +216,22 @@ void ggml_cuda_op_axpy_sparse(
     const int cc = ggml_cuda_info().devices[ggml_cuda_get_device()].cc;
     const enum ggml_prec prec = fast_fp16_available(cc) ? ggml_prec(dst->op_params[0]) : GGML_PREC_F32;
 
-    void * src0_d = nullptr;
     switch (src0->type) {
         case GGML_TYPE_F32: {
             const float * src0_d = (const float *) src0_dd_i;
+            mul_mat_axpy_cuda_sparse(src0_d, src1_ddf_i, sparse_idx, gpu_neu_idx, dst_dd_i, ncols, nrows, src1_ncols, prec, stream);
         } break;
         case GGML_TYPE_F16: {
             const half * src0_d = (const half *) src0_dd_i;
+            mul_mat_axpy_cuda_sparse(src0_d, src1_ddf_i, sparse_idx, gpu_neu_idx, dst_dd_i, ncols, nrows, src1_ncols, prec, stream);
         } break;
         case GGML_TYPE_BF16: {
             const nv_bfloat16 * src0_d = (const nv_bfloat16 *) src0_dd_i;
+            mul_mat_axpy_cuda_sparse(src0_d, src1_ddf_i, sparse_idx, gpu_neu_idx, dst_dd_i, ncols, nrows, src1_ncols, prec, stream);
         } break;
         default:
             GGML_ABORT("unsupported type: %s", ggml_type_name(src0->type));
     }
-
-    mul_mat_axpy_cuda_sparse(src0_d, src1_ddf_i, sparse_idx, gpu_neu_idx, dst_dd_i, ncols, nrows, src1_ncols, prec, stream);
 
     GGML_UNUSED(ctx);
     GGML_UNUSED(src1);

@@ -2604,7 +2604,7 @@ bool llama_model::load_sparse_tensors(llama_model_loader &ml, size_t vram_budget
                             layer.ffn_up   = create_tensor(tn(LLM_TENSOR_FFN_UP,   "weight", i), {n_embd,   n_ff}, 0);
 
                             // optional MLP bias
-                            layer.ffn_down_b = create_tensor(tn(LLM_TENSOR_FFN_DOWN, "bias", i), {n_embd}, TENSOR_NOT_REQUIRED);
+                            layer.ffn_down_b = create_tensor(tn(LLM_TENSOR_FFN_DOWN_T, "bias", i), {n_embd}, TENSOR_NOT_REQUIRED);
                             layer.ffn_up_b   = create_tensor(tn(LLM_TENSOR_FFN_UP,   "bias", i), {n_ff}, TENSOR_NOT_REQUIRED);
 
                             layer.layer_out_norm   = create_tensor(tn(LLM_TENSOR_LAYER_OUT_NORM, "weight", i), {n_embd}, 0);

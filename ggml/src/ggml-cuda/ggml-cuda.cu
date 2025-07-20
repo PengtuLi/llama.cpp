@@ -21,8 +21,7 @@
 #include "ggml-cuda/im2col.cuh"
 #include "ggml-cuda/mmq.cuh"
 #include "ggml-cuda/mmv.cuh"
-#include "ggml-cuda/mmv_sparse.cuh"
-#include "ggml-cuda/mmb_sparse.cuh"
+#include "ggml-cuda/mm_sparse.cuh"
 #include "ggml-cuda/axpy_sparse.cuh"
 #include "ggml-cuda/mmvq.cuh"
 #include "ggml-cuda/norm.cuh"
@@ -2008,18 +2007,13 @@ static void ggml_cuda_mul_mat(ggml_backend_cuda_context & ctx, const ggml_tensor
 
 static void ggml_cuda_mul_mat_sparse(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
     GGML_ASSERT(dst->src[2] != NULL && "dst->src[2] must be present for sparse matrix multiplication");
-    if (src1->ne[1] == 1) {
-        switch(src0->type) {
-            case GGML_TYPE_F16:
-                ggml_cuda_op_mul_mat(ctx, src0, src1, dst, ggml_cuda_op_mul_mat_vec_sparse, nullptr);
-                break;
-            default:
-                GGML_ASSERT(false && "unsupported type for sparse matrix multiplication"); //GTODO: do we need to support quantized type mm?
+    switch(src0->type) {
+        case GGML_TYPE_F16:
+            ggml_cuda_op_mul_mat(ctx, src0, src1, dst, ggml_cuda_op_mul_mat_sparse, nullptr);
+            break;
+        default:
+            GGML_ASSERT(false && "unsupported type for sparse matrix multiplication"); //GTODO: do we need to support quantized type mm?
         }
-    } else {
-        ggml_cuda_op_mul_mat(ctx, src0, src1, dst, ggml_cuda_op_mul_mat_cublas, nullptr);
-        // ggml_cuda_op_mul_mat(ctx, src0, src1, dst, ggml_cuda_op_mul_mat_batch_sparse, nullptr);  GTODO: we havent debug batch kernel, use this would encounter bugs, fixed it later
-    }
 }
 
 static void ggml_cuda_axpy_sparse(ggml_backend_cuda_context & ctx, const ggml_tensor * src0, const ggml_tensor * src1, ggml_tensor * dst) {
