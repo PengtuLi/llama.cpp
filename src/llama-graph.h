@@ -522,6 +522,8 @@ struct llm_graph_context {
             
             ggml_tensor * gpu_neu_mask,
             ggml_tensor * gpu_neu_idx,
+                  float   gpu_offload_ratio,
+
     llm_ffn_gate_type   type_gate,
                     int   il
     ) const;
@@ -534,7 +536,8 @@ struct llm_graph_context {
              ggml_tensor * gpu_neu_mask,     // the mask indicates which neuron is on gpu(1) or cpu(0)
              ggml_tensor * sparse_idx,
               const char * name,
-                     int   il
+                     int   il,
+                    bool   full_gpu
     )const;
 
     ggml_tensor * build_sparse_axpy(
@@ -545,7 +548,8 @@ struct llm_graph_context {
              ggml_tensor * gpu_neu_mask,     // the mask indicates which neuron is on gpu(1) or cpu(0)
              ggml_tensor * sparse_idx,
               const char * name,
-                     int   il
+                     int   il,
+                    bool   full_gpu
     )const;
 
     ggml_tensor * build_moe_ffn(

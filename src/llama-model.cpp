@@ -1606,6 +1606,9 @@ struct sparkInfer_layer_cache {
         
         char gate_name[64];
 
+        // if(gate){
+        //     ......
+        // }
         gpu_ffn_gate_cache = ggml_new_tensor_2d(tmp_ctx, cpu_ffn_gate->type, cpu_ffn_gate->ne[0], neuron_cache_capacity);
         snprintf(gate_name, sizeof(gate_name), "blk.%d.ffn_qgu_gate.weight", layer_idx);
         ggml_set_name(gpu_ffn_gate_cache, gate_name);
@@ -6048,6 +6051,7 @@ struct llm_build_llama : public llm_graph_context {
                             model.layers[il].ffn_down_t, model.layers[il].ffn_down_b,
                             model.layers[il].ffn_gpu_up, model.layers[il].ffn_gpu_gate, model.layers[il].ffn_gpu_down_t,
                             model.layers[il].ffn_gpu_neu_idx, model.layers[il].ffn_gpu_neu_mask,
+                            model.layers[il].gpu_offload_ratio,
                             ffn_gate_type, il);
                     cb(cur, "ffn_out", il);
                 }
@@ -6060,7 +6064,8 @@ struct llm_build_llama : public llm_graph_context {
                             model.layers[il].ffn_gate, model.layers[il].ffn_gate_b,
                             model.layers[il].ffn_down_t, model.layers[il].ffn_down_b,
                             model.layers[il].ffn_gpu_up, model.layers[il].ffn_gpu_gate, model.layers[il].ffn_gpu_down_t,
-                            model.layers[il].ffn_gpu_neu_idx, model.layers[il].ffn_gpu_neu_mask, 
+                            model.layers[il].ffn_gpu_neu_idx, model.layers[il].ffn_gpu_neu_mask,
+                            model.layers[il].gpu_offload_ratio, 
                             ffn_gate_type, il);
                     cb(cur, "ffn_out", il);
                 }
@@ -6074,7 +6079,8 @@ struct llm_build_llama : public llm_graph_context {
                             model.layers[il].ffn_gate, model.layers[il].ffn_gate_b,
                             model.layers[il].ffn_down_t, model.layers[il].ffn_down_b,
                             model.layers[il].ffn_gpu_up, model.layers[il].ffn_gpu_gate, model.layers[il].ffn_gpu_down_t,
-                            model.layers[il].ffn_gpu_neu_idx, model.layers[il].ffn_gpu_neu_mask, 
+                            model.layers[il].ffn_gpu_neu_idx, model.layers[il].ffn_gpu_neu_mask,
+                            model.layers[il].gpu_offload_ratio, 
                             ffn_gate_type, il);
                     cb(cur, "ffn_out", il);
                 }
@@ -6243,7 +6249,8 @@ struct llm_build_opt : public llm_graph_context {
                         NULL, NULL,
                         model.layers[il].ffn_down_t, model.layers[il].ffn_down_b,
                         model.layers[il].ffn_gpu_up, NULL, model.layers[il].ffn_gpu_down_t,
-                        model.layers[il].ffn_gpu_neu_idx, model.layers[il].ffn_gpu_neu_mask, 
+                        model.layers[il].ffn_gpu_neu_idx, model.layers[il].ffn_gpu_neu_mask,
+                        model.layers[il].gpu_offload_ratio, 
                         LLM_FFN_NOGATE, il);
                 cb(cur, "ffn_out", il);
             }
@@ -6257,6 +6264,7 @@ struct llm_build_opt : public llm_graph_context {
                         model.layers[il].ffn_down_t, model.layers[il].ffn_down_b,
                         model.layers[il].ffn_gpu_up, NULL, model.layers[il].ffn_gpu_down_t,
                         model.layers[il].ffn_gpu_neu_idx, model.layers[il].ffn_gpu_neu_mask,
+                        model.layers[il].gpu_offload_ratio,
                         LLM_FFN_NOGATE, il);
                 cb(cur, "ffn_out", il);
             }
@@ -6270,7 +6278,8 @@ struct llm_build_opt : public llm_graph_context {
                         NULL, NULL,
                         model.layers[il].ffn_down_t, model.layers[il].ffn_down_b,
                         model.layers[il].ffn_gpu_up, NULL, model.layers[il].ffn_gpu_down_t,
-                        model.layers[il].ffn_gpu_neu_idx, model.layers[il].ffn_gpu_neu_mask, 
+                        model.layers[il].ffn_gpu_neu_idx, model.layers[il].ffn_gpu_neu_mask,
+                        model.layers[il].gpu_offload_ratio, 
                         LLM_FFN_NOGATE, il);
                 cb(cur, "ffn_out", il);
             }

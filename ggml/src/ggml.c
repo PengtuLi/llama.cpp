@@ -2791,11 +2791,11 @@ struct ggml_tensor * ggml_mul_mat_sparse(
         struct ggml_tensor  * sparse_idx,
         struct ggml_tensor  * gpu_neu_idx) {
     
+    // printf("MULMAT: a->name: %s, ne[0]=%d, ne[1]=%d  b->name: %s, ne[0]=%d, ne[1]=%d\n", a->name, a->ne[0], a->ne[1], b->name, b->ne[0], b->ne[1]);
+
     GGML_ASSERT(ggml_can_mul_mat(a, b));
     GGML_ASSERT(!ggml_is_transposed(a));
     GGML_ASSERT(sparse_idx && "sparse_idx is required for sparse mul_mat");
-
-    // printf("MULMAT: a->name: %s, ne[0]=%d, ne[1]=%d  b->name: %s, ne[0]=%d, ne[1]=%d\n", a->name, a->ne[0], a->ne[1], b->name, b->ne[0], b->ne[1]);
 
     const int64_t ne[4] = { sparse_idx->ne[0], b->ne[1], b->ne[2], b->ne[3] };
     struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F32, GGML_MAX_DIMS, ne);
@@ -2845,7 +2845,7 @@ struct ggml_tensor * ggml_axpy(
     const int64_t ne[4] = { a->ne[1], b->ne[1], b->ne[2], b->ne[3] };
     struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F32, GGML_MAX_DIMS, ne);
 
-    result->op   = GGML_OP_MUL_MAT; // GTODO: currently we havnt build sparse kernels, so we fallback to dense mulmat
+    result->op   = GGML_OP_MUL_MAT; // GTODO: currently we havnt build dense axpy kernels, so we fallback to dense mulmat
     result->src[0] = a;
     result->src[1] = b;
     result->src[2] = sparse_idx;

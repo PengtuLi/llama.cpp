@@ -694,16 +694,24 @@ ggml_tensor * llm_graph_context::build_sparse_mul_mat(
              ggml_tensor * gpu_neu_mask,     // the mask indicates which neuron is on gpu(1) or cpu(0), more useful in cpu operation
              ggml_tensor * sparse_idx,
               const char * name,
-                     int   il
+                     int   il,
+                    bool   full_gpu
 ) const{
     std::string full_name = "ffn_" + std::string(name) + "_sparse";
     ggml_tensor * out = nullptr;
 
     // GTODO : do we need specific implement of full_gpu? yes
-    GGML_ASSERT(gpu_neu_mask && "gpu_neu_mask is required to be exited");
+    if(full_gpu){
+        ggml_tensor * out = ggml_mul_mat_sparse(ctx0, gpu_weight, cur, sparse_idx, nullptr);
+        cb(out, (full_name + "_gpu").c_str(), il);
+        return out;
+    }
+
+    // CPU compute
     out = ggml_mul_mat_sparse(ctx0, weight, cur, sparse_idx, gpu_neu_mask);
     cb(out, full_name.c_str(), il);
 
+// GPU compute
 #ifdef GGML_USE_CUDA
     if (gpu_weight)
     {
@@ -729,12 +737,18 @@ ggml_tensor * llm_graph_context::build_sparse_axpy(
              ggml_tensor * gpu_neu_mask,     // the mask indicates which neuron is on gpu(1) or cpu(0), more useful in cpu operation
              ggml_tensor * sparse_idx,
               const char * name,
-                     int   il
+                     int   il,
+                    bool   full_gpu
 ) const{
     std::string full_name = "ffn_" + std::string(name) + "_sparse";
     ggml_tensor * out = nullptr;
 
     // GTODO : do we need specific implement of full_gpu? 
+    if(full_gpu){
+        ggml_tensor * out = ggml_axpy_sparse(ctx0, gpu_weight, cur, sparse_idx, nullptr);
+        cb(out, (full_name + "_gpu").c_str(), il);
+        return out;
+    }
 
     out = ggml_axpy_sparse(ctx0, weight, cur, sparse_idx, gpu_neu_mask);
     cb(out, full_name.c_str(), il);
@@ -780,12 +794,18 @@ ggml_tensor * llm_graph_context::build_sparse_ffn(
          ggml_tensor * gpu_gate,
          ggml_tensor * gpu_down,
          
-         ggml_tensor * gpu_neu_mask,
          ggml_tensor * gpu_neu_idx,
+         ggml_tensor * gpu_neu_mask,
+               float   gpu_offload_ratio,     
+
    llm_ffn_gate_type   type_gate,
                  int   il) const{          
         // predictor GTODO: add net-layer predictor logit
         ggml_tensor * sparse_idx = nullptr;
+        bool full_gpu = gpu_offload_ratio >= 1.0f;
+
+        // printf("layer %d: gpu_neu_idx->ne[0]=%d, ne[1]=%d\n", il, gpu_neu_idx->ne[0], gpu_neu_idx->ne[1]);
+        // printf("layer %d: gpu_neu_mask->ne[0]=%d, ne[1]=%d\n", il, gpu_neu_mask->ne[0], gpu_neu_mask->ne[1]);
         
         // get sparse_idx for this layer
         if (il == 0){
@@ -820,14 +840,14 @@ ggml_tensor * llm_graph_context::build_sparse_ffn(
         // sparse_ffn  GTODO: use integrated kernel?
         ggml_tensor * cur = nullptr;
         {
-            ggml_tensor * up_out = build_sparse_mul_mat(input, up, gpu_up, gpu_neu_idx, gpu_neu_mask, sparse_idx, "up", il); 
+            ggml_tensor * up_out = build_sparse_mul_mat(input, up, gpu_up, gpu_neu_idx, gpu_neu_mask, sparse_idx, "up", il, full_gpu); 
             if(up_b){
                 up_out = ggml_add(ctx0, up_out, up_b);
                 cb(up_out, "fnn_up_b", il);
             }
 
             if(gate){
-                ggml_tensor * gate_out = build_sparse_mul_mat(input, gate, gpu_gate, gpu_neu_idx, gpu_neu_mask, sparse_idx, "gate", il); 
+                ggml_tensor * gate_out = build_sparse_mul_mat(input, gate, gpu_gate, gpu_neu_idx, gpu_neu_mask, sparse_idx, "gate", il, full_gpu); 
                 
                 if(gate_b){
                     gate_out = ggml_add(ctx0, gate_out, gate_b);
@@ -850,7 +870,7 @@ ggml_tensor * llm_graph_context::build_sparse_ffn(
                 cur = up_out;
             }
 
-            cur = build_sparse_axpy(cur, down, gpu_down, gpu_neu_idx, gpu_neu_mask, sparse_idx, "down", il); 
+            cur = build_sparse_axpy(cur, down, gpu_down, gpu_neu_idx, gpu_neu_mask, sparse_idx, "down", il, full_gpu); 
 
             if (down_b) {
                 cur = ggml_add(ctx0, cur, down_b);

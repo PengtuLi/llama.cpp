@@ -12,8 +12,8 @@ static __global__ void mul_mat_axpy_sparse(
     const int ncols, 
     const int nrows, 
     
-    const int   * gpu_neu_idx, 
-    const float * sparse_idx
+    const int64_t   * gpu_neu_idx, 
+    const float     * sparse_idx
     ) {
 
     const int blk_idx = blockIdx.x;          // block index, range from [0,nrows]
@@ -69,8 +69,8 @@ static __global__ void mul_mat_axpy_sparse_batch(
     const int ncols, 
     const int nrows, 
     
-    const int   * gpu_neu_idx, 
-    const float * sparse_idx
+    const int64_t   * gpu_neu_idx, 
+    const float     * sparse_idx
     ) {
 
     const int blk_idx   = blockIdx.x;          // block index, range from [0, nrows]
@@ -126,7 +126,7 @@ static __global__ void mul_mat_axpy_sparse_batch(
 
 template <typename T, typename type_acc>
 static void launch_mul_mat_axpy_cuda_sparse(
-        const T * x, const float * y, const float * sparse_idx, const int32_t * gpu_neu_idx, float * dst,
+        const T * x, const float * y, const float * sparse_idx, const int64_t * gpu_neu_idx, float * dst,
         const int64_t ncols, const int64_t nrows, const int64_t src_ncols, cudaStream_t stream) {
     
     // vec_axpy
@@ -147,7 +147,7 @@ static void launch_mul_mat_axpy_cuda_sparse(
 
 template<typename T>
 static void mul_mat_axpy_cuda_sparse(
-        const T * x, const float * y, const float * sparse_idx, const int32_t * gpu_neu_idx, float * dst,
+        const T * x, const float * y, const float * sparse_idx, const int64_t * gpu_neu_idx, float * dst,
         const int64_t ncols, const int64_t nrows, const int64_t src_ncols,
         enum ggml_prec prec, cudaStream_t stream) {
     if constexpr(std::is_same<T, half>::value) {
@@ -211,7 +211,7 @@ void ggml_cuda_op_axpy_sparse(
     GGML_ASSERT(ggml_cuda_get_tensor_data_axpy(dst->src[2])!=nullptr  && "missing sparse_idx");
 
     float * sparse_idx = static_cast<float *>(ggml_cuda_get_tensor_data_axpy(dst->src[2]));
-    int32_t * gpu_neu_idx = dst->src[3] != NULL ? static_cast<int32_t *>(ggml_cuda_get_tensor_data_axpy(dst->src[3])) : NULL;
+    int64_t * gpu_neu_idx = dst->src[3] != NULL ? static_cast<int64_t *>(ggml_cuda_get_tensor_data_axpy(dst->src[3])) : NULL;
 
     const int cc = ggml_cuda_info().devices[ggml_cuda_get_device()].cc;
     const enum ggml_prec prec = fast_fp16_available(cc) ? ggml_prec(dst->op_params[0]) : GGML_PREC_F32;

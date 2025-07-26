@@ -5,13 +5,13 @@
 // vec
 template <typename T, typename type_acc, int block_size>
 static __global__ void mul_mat_vec_sparse(
-        const T * __restrict__ x, 
-        const float * __restrict__ y, 
-        const float *  __restrict__ sparse_idx, 
-        const int64_t *  __restrict__ gpu_neu_idx,
-        float * __restrict__ dst,
+        const T *       __restrict__ x, 
+        const float *   __restrict__ y, 
+        const float *   __restrict__ sparse_idx, 
+        const int64_t * __restrict__ gpu_neu_idx,
+        float *         __restrict__ dst,
 
-        const int64_t ncols2
+        const int64_t   ncols2
 ) {
     const int64_t row         = blockIdx.x;  // (0, nrows)
     const int     tid         = threadIdx.x; // (0, 256)
@@ -131,10 +131,16 @@ static __global__ void mul_mat_batch_sparse(
     dst        += nrows * s1col_b;
     sparse_idx += nrows * s1col_b;
 
+    // we have ensure the cuda memory error will happen below
+
+    // if(tid == 0) printf("row=%d ready for sparse_idx[%d]=%f\n",row, neu, sparse_idx[neu]);
     if(sparse_idx[neu] < 0.5f){ // GTODO: do we need sparse_threshold?
+        // if(tid == 0) printf("row=%d in sparse_idx[%d]=%f\n",row, neu, sparse_idx[neu]);  
         if (tid == 0) dst[neu] = 0.0f;
         return;
     }
+
+    // we have ensure the cuda memory error will happen above
 
     const float2 * y2 = (const float2 *) y;
 
@@ -214,13 +220,37 @@ static __global__ void mul_mat_batch_sparse(
     dst[neu] = sumf;
 }
 
+static __global__ void print(
+    const float *       __restrict__ sparse_idx, 
+    const int64_t *     __restrict__ gpu_neu_idx,
+    const int64_t ncols,
+    const int64_t nrows,
+    const int64_t src1_ncols)
+{
+    if (blockIdx.x == 0 && threadIdx.x == 0) {
+        printf("\n=== sparse_idx ===\n");
+        for (int i = 0; i < nrows && (i % 100)==0; i++) {
+            printf("sparse_idx[%d] = %f\n", i, sparse_idx[i]);
+        }
+
+        if(gpu_neu_idx){
+            printf("=== gpu_neu_idx ===\n");
+            for (int i = 0; i < nrows && (i % 100)==0; i++) {
+                printf("gpu_neu_idx[%d] = %lld\n", i, gpu_neu_idx[i]);
+            }            
+        }
+
+    }
+}
+
 template <typename T, typename type_acc>
 static void launch_mul_mat_cuda_sparse(
         const T * x, const float * y, const float * sparse_idx, const int64_t * gpu_neu_idx, float * dst,
         const int64_t ncols, const int64_t nrows, const int64_t src1_ncols, cudaStream_t stream) {
+
+    // print<<<1, 32, 0, stream>>>(sparse_idx, gpu_neu_idx, ncols, nrows, src1_ncols);
     
     GGML_ASSERT(ncols % 2 == 0);
-    
     int device;
     CUDA_CHECK(cudaGetDevice(&device));
 
@@ -342,21 +372,27 @@ static void mul_mat_cuda_sparse(
 // but more importantly, what's the diffence between tensor->data & tensor-extra->data_device[device]? which to load???
 void * ggml_cuda_get_tensor_data(const ggml_tensor * tensor) {
     return tensor->data;
-    // if (!tensor) {
-    //     printf("no tensor, %s\n",tensor->name);
-    //     GGML_ASSERT(false && "tensor is null");
-    //     return nullptr;
+    // if (tensor->data) {
+    //     printf("no tensor data %s\n",tensor->name);
+    //     // GGML_ASSERT(false && "tensor is null");
+    //     // return nullptr;
+    // }
+    // else{
+    //     printf("have tensor data %s\n",tensor->name);
     // }
     // if (!tensor->extra) {
     //     printf("no tensor-extra, %s\n",tensor->name); 
-    //     GGML_ASSERT(false && "tensor->extra is null"); sparse_idx在这里会报错, saprse_idx is only at tensor->data 
-    //     return nullptr;
+    //     // GGML_ASSERT(false && "tensor->extra is null"); // sparse_idx在这里会报错, saprse_idx is only at tensor->data 
+    //     // return nullptr;
+    // }
+    // else{
+    //     printf("have tensor-extra %s\n",tensor->name);
     // }
     // int device = ggml_cuda_get_device();
     // auto extra = (ggml_tensor_extra_gpu *) tensor->extra;
-
+    // return nullptr;
     // if(tensor->data)
-    // return extra->data_device[device];
+    //     return extra->data_device[device];
 }
 
 
@@ -387,8 +423,19 @@ void ggml_cuda_op_mul_mat_sparse(
 
     GGML_ASSERT(ggml_cuda_get_tensor_data(dst->src[2])!=nullptr  && "missing sparse_idx");
 
+    // GTODO:  this is a hack, we encounter sigsegv error when printf sparse_idx[0]
     float * sparse_idx = static_cast<float *>(ggml_cuda_get_tensor_data(dst->src[2]));
     int64_t * gpu_neu_idx = dst->src[3] != NULL ? static_cast<int64_t *>(ggml_cuda_get_tensor_data(dst->src[3])) : NULL;
+    // GGML_ABORT("debugging");
+    // // for(int i = 0;i < 100;i++){
+    //      printf("sparse_idx[%d]=%f\n",0,sparse_idx[0]);
+    // // }
+
+    // // for(int i = 0;i < 100;i++){
+    // //     printf("gpu_neu_id[%d]=%l\n",i,gpu_neu_idx[i]);
+    // // }
+
+    // // GGML_ABORT("DEBUGGING");
 
     const int cc = ggml_cuda_info().devices[ggml_cuda_get_device()].cc;
     const enum ggml_prec prec = fast_fp16_available(cc) ? ggml_prec(dst->op_params[0]) : GGML_PREC_F32;

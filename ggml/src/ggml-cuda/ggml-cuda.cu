@@ -1418,6 +1418,16 @@ static void ggml_cuda_op_mul_mat(
     //     dst->src[2]->data,
     //     dst->src[2]->extra
     //     );
+    // if(dst->src[2]->data != nullptr){
+    //     printf("\n\ndst->src[2]->data != nullptr\n\n");
+    //     float * sparse_idx = (float*)dst->src[2]->data;
+    //     for(int i = 0; i < 100;i++){
+    //         printf("%f ", sparse_idx[i]);
+    //     }
+    //     printf("\n");
+    // }else{
+    //     printf("\n\ndst->src[2]->data ==== nullptr\n\n");
+    // }
     // }
 
     const int64_t ne00 = src0->ne[0];
@@ -1430,6 +1440,9 @@ static void ggml_cuda_op_mul_mat(
     const int64_t ne12 = src1->ne[2];
     const int64_t ne13 = src1->ne[3];
     const int64_t nrows1 = ggml_nrows(src1);
+
+    // printf(">>> src0-ne0=%d,src0-ne1=%d,src0-ne2=%d,src0-ne3=%d\n\n", ne00,ne01,ne02,ne03); // 4096, 4096, 1, 1
+    // printf(">>> src1-ne0=%d,src1-ne1=%d,src1-ne2=%d,src1-ne3=%d\n\n", ne10,ne11,ne12,ne13); // 4096, 18, 1, 1
 
     const int64_t ne0 = dst->ne[0];
     const int64_t ne1 = dst->ne[1];
@@ -2012,7 +2025,7 @@ static void ggml_cuda_mul_mat_sparse(ggml_backend_cuda_context & ctx, const ggml
             ggml_cuda_op_mul_mat(ctx, src0, src1, dst, ggml_cuda_op_mul_mat_sparse, nullptr);
             break;
         default:
-            GGML_ASSERT(false && "unsupported type for sparse matrix multiplication"); //GTODO: do we need to support quantized type mm?
+            GGML_ASSERT(false && "unsupported type for sparse matrix multiplication");
         }
 }
 
@@ -2023,7 +2036,7 @@ static void ggml_cuda_axpy_sparse(ggml_backend_cuda_context & ctx, const ggml_te
             ggml_cuda_op_mul_mat(ctx, src0, src1, dst, ggml_cuda_op_axpy_sparse, nullptr);
             break;
         default:
-            GGML_ASSERT(false && "unsupported type for sparse matrix multiplication"); //GTODO: do we need to support quantized type mm?
+            GGML_ASSERT(false && "unsupported type for sparse matrix multiplication");
     }
 }
 
