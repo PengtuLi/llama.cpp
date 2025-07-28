@@ -2321,10 +2321,20 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
             ggml_cuda_mul_mat(ctx, dst->src[0], dst->src[1], dst);
             break;
         case GGML_OP_MUL_MAT_SPARSE:
-            ggml_cuda_mul_mat_sparse(ctx, dst->src[0], dst->src[1], dst);
+            // {
+            //     int t_s = ggml_time_ms();
+                ggml_cuda_mul_mat_sparse(ctx, dst->src[0], dst->src[1], dst);
+            //     int t_e =ggml_time_ms();
+            //     printf("[DEBUG_CUDA] mal_mat: tensor->name=%s, time=%lld\n", dst->name, t_e-t_s);
+            // }
             break;
         case GGML_OP_AXPY:
-            ggml_cuda_axpy_sparse(ctx, dst->src[0], dst->src[1], dst);
+        //    {
+        //         int t_s1 = ggml_time_ms();
+                ggml_cuda_axpy_sparse(ctx, dst->src[0], dst->src[1], dst);
+            //     int t_e1 =ggml_time_ms();
+            //     printf("[DEBUG_CUDA]    axpy: tensor->name=%s, time=%lld\n", dst->name, t_e1-t_s1);
+            // }
             break;
         case GGML_OP_MUL_MAT_ID:
             ggml_cuda_mul_mat_id(ctx, dst);
