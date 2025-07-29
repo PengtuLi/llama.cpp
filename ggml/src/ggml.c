@@ -2797,7 +2797,7 @@ struct ggml_tensor * ggml_mul_mat_sparse(
     GGML_ASSERT(!ggml_is_transposed(a));
     GGML_ASSERT(sparse_idx && "sparse_idx is required for sparse mul_mat");
 
-    const int64_t ne[4] = { sparse_idx->ne[0], b->ne[1], b->ne[2], b->ne[3] };
+    const int64_t ne[4] = { sparse_idx->ne[0], sparse_idx->ne[1], b->ne[2], b->ne[3] };
     struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F32, GGML_MAX_DIMS, ne);
 
     result->op   = GGML_OP_MUL_MAT_SPARSE;

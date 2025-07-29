@@ -1612,11 +1612,14 @@ static void ggml_compute_forward_mul_mat_sparse(
         const size_t mask_ne = ggml_nelements(idx);
         memset(need_compute, 0, mask_ne*sizeof(int64_t));
 
+        // printf("%s, nelement of idx=%lld, ne0=%lld, ne1 = %lld, ne0*ne1=%lld\n", dst->name, ggml_nelements(idx), ne0, ne1, ne1*ne0);
+        GGML_ASSERT(ggml_nelements(idx) == ne0 * ne1);
+
         const float   * sparse_idx  = (const float   *) idx->data;
         const int64_t * cpu_mask    = (const int64_t *) mask->data;
 
         for (size_t i = 0; i < mask_ne; i++) {
-            if (cpu_mask[i] == 0 && sparse_idx[i] >= 0.5f) {
+            if (cpu_mask[i%ne01] == 0 && sparse_idx[i] >= 0.5f) {
                 need_compute[i] = 1;
             }
         }
@@ -2028,30 +2031,32 @@ static void ggml_compute_forward_axpy_sparse_one_chunk(
 
     char * weight_char = (char *)src0->data;
     char *  token_char = (char *)input;
-    int64_t * cpu_mask = (int64_t *)mask->data + start_neu;
+    int64_t * cpu_mask = (int64_t *)mask->data;
 
     for(int neu = start_neu; neu < end_neu; neu++){
         char * weight_row = weight_char + neu_len_char * neu;
         if(cpu_mask[neu] == 1){
             continue;
         }
-
         float vy[ne00];
-        memset(vy, 0, ne00*sizeof(float));
-
         for(int token_id = 0; token_id < n_tokens; token_id++){
-            ggml_fp16_t * token = (ggml_fp16_t *)(token_char + token_id * token_len_char);
+            memset(vy, 0, ne00*sizeof(float));
+
+            ggml_fp16_t * token = (char *)(token_char + token_id * token_len_char);
             ggml_fp16_t alpha_fp16 = token[neu];
             float alpha = GGML_FP16_TO_FP32(alpha_fp16);
 
             if(alpha == 0.0f){
                 continue;
             }
-
-            ggml_axpy_avx_f16(ne00, weight_char, vy, alpha);
+            ggml_axpy_avx_f16(ne00, weight_row, vy, alpha);
+            float * dst_row = (float *)((char *)dst->data + nb1 * token_id);
+            
+            for(int i = 0; i < ne00; i++){
+#pragma omp atomic
+                dst_row[i] += vy[i];
+            }
         }
-        float * dst_row = (float *)((char *)dst->data + nb1 * neu);
-        memcpy(dst_row, vy, ne00 * sizeof(float));
     }
 }
 
