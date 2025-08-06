@@ -552,6 +552,15 @@ struct llm_graph_context {
                     bool   full_gpu
     )const;
 
+    ggml_tensor * build_predictor(
+        ggml_tensor * input,
+        ggml_tensor * pred_up,
+        ggml_tensor * pred_up_b,
+        ggml_tensor * pred_down,
+        ggml_tensor * pred_down_b,
+          const int   il
+    )const;
+
     ggml_tensor * build_moe_ffn(
              ggml_tensor * cur,
              ggml_tensor * gate_inp,

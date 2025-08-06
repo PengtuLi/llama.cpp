@@ -767,6 +767,40 @@ ggml_tensor * llm_graph_context::build_sparse_axpy(
     return out;
 }
 
+ggml_tensor * llm_graph_context::build_predictor(
+        ggml_tensor * input,
+        ggml_tensor * pred_up,
+        ggml_tensor * pred_up_b,
+        ggml_tensor * pred_down,
+        ggml_tensor * pred_down_b,
+          const int   il
+) const{
+    ggml_tensor * sparse_idx = nullptr;
+    sparse_idx = ggml_mul_mat(ctx0, pred_up, input);
+    cb(sparse_idx, "pred_up", il);
+
+    if(pred_up_b){
+        sparse_idx = ggml_add(ctx0, sparse_idx, pred_up_b);
+        cb(sparse_idx, "pred_up_b", il);
+    }
+
+    sparse_idx = ggml_relu(ctx0, sparse_idx);
+    cb(sparse_idx, "pred_relu",il);
+
+    sparse_idx = ggml_mul_mat(ctx0, pred_down, sparse_idx);
+    cb(sparse_idx, "pred_down", il);
+
+    if(pred_down_b){
+        sparse_idx = ggml_add(ctx0, sparse_idx, pred_down_b);
+        cb (sparse_idx, "pred_down_b", il);
+    }  
+
+    sparse_idx = ggml_sigmoid(ctx0, sparse_idx);
+    cb(sparse_idx, "pred_out", il);
+
+    return sparse_idx;
+}
+
 
 // build sparse ffn graph  
 ggml_tensor * llm_graph_context::build_sparse_ffn(
@@ -804,38 +838,12 @@ ggml_tensor * llm_graph_context::build_sparse_ffn(
         ggml_tensor * sparse_idx = nullptr;
         bool full_gpu = gpu_offload_ratio >= 1.0f;
 
-        // printf("layer %d: gpu_neu_idx->ne[0]=%d, ne[1]=%d\n", il, gpu_neu_idx->ne[0], gpu_neu_idx->ne[1]);
-        // printf("layer %d: gpu_neu_mask->ne[0]=%d, ne[1]=%d\n", il, gpu_neu_mask->ne[0], gpu_neu_mask->ne[1]);
-        
         // get sparse_idx for this layer
         if (il == 0){
-            sparse_idx = ggml_mul_mat(ctx0, pred_up_0, input);
-            cb(sparse_idx, "pred_up", il);
-
-            if(pred_up_b_0){
-                sparse_idx = ggml_add(ctx0, sparse_idx, pred_up_b_0);
-                cb(sparse_idx, "pred_up_b", il);
-            }
-
-            sparse_idx = ggml_relu(ctx0, sparse_idx);
-            cb(sparse_idx, "pred_relu",il);
-
-            sparse_idx = ggml_mul_mat(ctx0, pred_down_0, sparse_idx);
-            cb(sparse_idx, "pred_down", il);
-
-            if(pred_down_b_0){
-                sparse_idx = ggml_add(ctx0, sparse_idx, pred_down_b_0);
-                cb (sparse_idx, "pred_down_b", il);
-            }  
+            sparse_idx = build_predictor(input, pred_up_0, pred_up_b_0, pred_down_0, pred_down_b_0, il);
         }else{
             sparse_idx = sparse_idx_cross_layer;
         }
-
-        sparse_idx = ggml_sigmoid(ctx0, sparse_idx);
-        cb(sparse_idx, "pred_out", il);
-
-        ggml_tensor * sparse_idx_for_next = ggml_dup(ctx0, sparse_idx); // dup for next layer
-        cb(sparse_idx_for_next, "pred_out_dup", il);
 
         // sparse_ffn  GTODO: use integrated kernel?
         ggml_tensor * cur = nullptr;
@@ -857,10 +865,10 @@ ggml_tensor * llm_graph_context::build_sparse_ffn(
                 // we only support par gate_op
                 if (type_gate == LLM_FFN_PAR){
                     gate_out = ggml_relu(ctx0, gate_out);
-                    cb(input, "ffn_gate_act",il);
+                    cb(gate_out, "ffn_gate_act",il);
 
                     gate_out = ggml_mul(ctx0, gate_out, up_out);
-                    cb(input, "ffn_gate_par",il);
+                    cb(gate_out, "ffn_gate_par",il);
                 }else{
                     GGML_ASSERT(false && "unsupported gate type");
                 }
@@ -880,30 +888,10 @@ ggml_tensor * llm_graph_context::build_sparse_ffn(
         
         if (il != n_layer - 1) {
             // 用通用的 pred_up/pred_down 计算
-            ggml_tensor * next_idx = ggml_mul_mat(ctx0, pred_up, input);
-            cb(next_idx, "pred_up", il+1);
-            
-            if (pred_up_b) {
-                next_idx = ggml_add(ctx0, next_idx, pred_up_b);
-                cb(next_idx, "pred_up_b", il+1);
-            }
-            
-            next_idx = ggml_relu(ctx0, next_idx);
-            cb(next_idx, "pred_relu", il+1);
+            ggml_tensor * next_sparse_idx = build_predictor(input, pred_up, pred_up_b, pred_down, pred_down_b, il+1);
 
-            next_idx = ggml_mul_mat(ctx0, pred_down, next_idx);
-            cb(next_idx, "pred_down", il+1);
-            
-            if (pred_down_b) {
-                next_idx = ggml_add(ctx0, next_idx, pred_down_b);
-                cb(next_idx, "pred_down_b", il+1);
-            }
-
-            next_idx = ggml_sigmoid(ctx0, next_idx);
-            cb(next_idx, "pred_out", il+1);
-
-            // dup for next layer
-            sparse_idx_cross_layer = ggml_dup(ctx0, next_idx);
+            // sparse_idx_cross_layer = next_sparse_idx;
+            sparse_idx_cross_layer = ggml_dup(ctx0, next_sparse_idx); // why we do this??
             cb(sparse_idx_cross_layer, "pred_out_dup", il+1);
         }
         
