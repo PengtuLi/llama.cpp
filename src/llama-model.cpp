@@ -1561,7 +1561,10 @@ struct sparkInfer_layer_cache {
         this->gpu_backend = backend;
         this->cpu_backend = ggml_backend_cpu_init();
 
-        this->cpu_ffn_gate   = layer.ffn_gate;
+        bool has_gate = true; // GTODO: gate diverage
+        bool full_gpu = layer.gpu_offload_ratio >= 1;
+
+        this->cpu_ffn_gate   = has_gate ? layer.ffn_gate : nullptr;
         this->cpu_ffn_up     = layer.ffn_up;
         this->cpu_ffn_down_t = layer.ffn_down_t;
         
@@ -1606,14 +1609,13 @@ struct sparkInfer_layer_cache {
         
         char gate_name[64];
 
-        // if(gate){
-        //     ......
-        // }
-        gpu_ffn_gate_cache = ggml_new_tensor_2d(tmp_ctx, cpu_ffn_gate->type, cpu_ffn_gate->ne[0], neuron_cache_capacity);
-        snprintf(gate_name, sizeof(gate_name), "blk.%d.ffn_qgu_gate.weight", layer_idx);
-        ggml_set_name(gpu_ffn_gate_cache, gate_name);
-        ggml_backend_tensor_alloc(gpu_weights_buffer, gpu_ffn_gate_cache, current_addr);
-        current_addr = (char*)current_addr + single_cache_size;
+        if(has_gate) {
+            gpu_ffn_gate_cache = ggml_new_tensor_2d(tmp_ctx, cpu_ffn_gate->type, cpu_ffn_gate->ne[0], neuron_cache_capacity);
+            snprintf(gate_name, sizeof(gate_name), "blk.%d.ffn_qgu_gate.weight", layer_idx);
+            ggml_set_name(gpu_ffn_gate_cache, gate_name);
+            ggml_backend_tensor_alloc(gpu_weights_buffer, gpu_ffn_gate_cache, current_addr);
+            current_addr = (char*)current_addr + single_cache_size;
+        }
 
         gpu_ffn_up_cache = ggml_new_tensor_2d(tmp_ctx, cpu_ffn_up->type, cpu_ffn_up->ne[0], neuron_cache_capacity);
         snprintf(gate_name, sizeof(gate_name), "blk.%d.ffn_qgu_up.weight", layer_idx);
@@ -1627,7 +1629,7 @@ struct sparkInfer_layer_cache {
         ggml_backend_tensor_alloc(gpu_weights_buffer, gpu_ffn_down_t_cache, current_addr);
         
         // 将新的GPU缓存张量赋给llama_layer
-        layer.ffn_gpu_gate = gpu_ffn_gate_cache;
+        layer.ffn_gpu_gate = has_gate ? gpu_ffn_gate_cache : nullptr;
         layer.ffn_gpu_up   = gpu_ffn_up_cache;
         layer.ffn_gpu_down_t = gpu_ffn_down_t_cache;
 
@@ -1635,36 +1637,40 @@ struct sparkInfer_layer_cache {
         auto t_start = ggml_time_ms();
         this->slot_to_neuron_map.resize(neuron_cache_capacity, -1);
 
-        auto batch_copy_neurons = [&](ggml_tensor* cpu_src, ggml_tensor* gpu_dst_cache, const std::vector<int64_t>& indices) {
-            
-            const int64_t n_embd = cpu_src->ne[0];
-            const size_t row_size_bytes = ggml_row_size(cpu_src->type, n_embd);
-            
-            // 在CPU上分配一个临时暂存缓冲区
-            std::vector<char> staging_buffer(row_size_bytes * indices.size());
-            
-            for (size_t i = 0; i < indices.size(); ++i) {
-                const int64_t neuron_idx = indices[i];
-                // if(i%100 == 0) printf("[DEBUG]:: layer %d, indices[%d]=%lld\n", layer_idx, i, neuron_idx);
+        auto batch_copy_neurons = [&](ggml_tensor* cpu_src, ggml_tensor* gpu_dst_cache, const std::vector<int64_t>& indices, const bool full_gpu) {
+            if(full_gpu){
+                const size_t full_tensor_bytes = ggml_nbytes(cpu_src);
+                ggml_backend_tensor_set(gpu_dst_cache, cpu_src->data, 0, full_tensor_bytes);
+            }else{
+                const int64_t n_embd = cpu_src->ne[0];
+                const size_t row_size_bytes = ggml_row_size(cpu_src->type, n_embd);
                 
-                // 源地址：在完整CPU张量中的位置
-                char* src_ptr = (char*)cpu_src->data + neuron_idx * cpu_src->nb[1];
+                // 在CPU上分配一个临时暂存缓冲区
+                std::vector<char> staging_buffer(row_size_bytes * indices.size());
                 
-                // 目标地址：在暂存缓冲区中的位置
-                char* dst_ptr = staging_buffer.data() + i * row_size_bytes;
+                for (size_t i = 0; i < indices.size(); ++i) {
+                    const int64_t neuron_idx = indices[i];
+                    // if(i%100 == 0) printf("[DEBUG]:: layer %d, indices[%d]=%lld\n", layer_idx, i, neuron_idx);
+                    
+                    // 源地址：在完整CPU张量中的位置
+                    char* src_ptr = (char*)cpu_src->data + neuron_idx * cpu_src->nb[1];
+                    
+                    // 目标地址：在暂存缓冲区中的位置
+                    char* dst_ptr = staging_buffer.data() + i * row_size_bytes;
+                    
+                    memcpy(dst_ptr, src_ptr, row_size_bytes);
+                }
                 
-                memcpy(dst_ptr, src_ptr, row_size_bytes);
+                ggml_backend_tensor_set(gpu_dst_cache, staging_buffer.data(), 0, staging_buffer.size());
             }
-            
-            ggml_backend_tensor_set(gpu_dst_cache, staging_buffer.data(), 0, staging_buffer.size());
         };
 
-        batch_copy_neurons(cpu_ffn_gate, gpu_ffn_gate_cache, initial_gpu_neuron_indices);
-        batch_copy_neurons(cpu_ffn_up, gpu_ffn_up_cache, initial_gpu_neuron_indices);
-        batch_copy_neurons(cpu_ffn_down_t, gpu_ffn_down_t_cache, initial_gpu_neuron_indices);
+        if(has_gate) batch_copy_neurons(cpu_ffn_gate, gpu_ffn_gate_cache, initial_gpu_neuron_indices, full_gpu);
+        batch_copy_neurons(cpu_ffn_up, gpu_ffn_up_cache, initial_gpu_neuron_indices, full_gpu);
+        batch_copy_neurons(cpu_ffn_down_t, gpu_ffn_down_t_cache, initial_gpu_neuron_indices, full_gpu);
 
         // 更新元数据
-        offloaded_bytes += ggml_nbytes(gpu_ffn_up_cache) * 3; // 每个神经元有3个矩阵
+        offloaded_bytes += ggml_nbytes(gpu_ffn_up_cache) * (full_gpu ? 3 : 2); // 每个神经元有3个矩阵
         for (size_t i = 0; i < initial_gpu_neuron_indices.size(); ++i) {
             int64_t neuron_idx = initial_gpu_neuron_indices[i];
             int64_t slot_idx = i;
@@ -1672,7 +1678,7 @@ struct sparkInfer_layer_cache {
         }
 
         auto t_end = ggml_time_ms();
-        LLAMA_LOG_INFO("%s: layer %d offload in %lld ms, cached %d neurons\n", __func__, layer_idx, t_end - t_start, neuron_cache_capacity);
+        LLAMA_LOG_INFO("%s: layer %d offload in %lld ms, cached %d neurons %s\n", __func__, layer_idx, t_end - t_start, neuron_cache_capacity, full_gpu?"(full_gpu)":" ");
 
         return true;
     }
