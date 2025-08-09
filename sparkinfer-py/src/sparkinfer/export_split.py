@@ -86,7 +86,7 @@ class NeuronPartition:
         # --- GGUF write ---
 
         # a) ffn_gpu_neu_mask (位图)
-        ffn_gpu_neu_mask = np.zeros(self.total_neurons_in_layer, dtype=np.int32)
+        ffn_gpu_neu_mask = np.zeros(self.total_neurons_in_layer, dtype=np.int64)
         if gpu_neurons_set:
             selected_indices = list(gpu_neurons_set)
             ffn_gpu_neu_mask[selected_indices] = 1
@@ -95,27 +95,27 @@ class NeuronPartition:
             name=key_gpu_neu_mask,
             tensor=ffn_gpu_neu_mask,
             raw_shape=ffn_gpu_neu_mask.shape[::-1],
-            raw_dtype=GGMLQuantizationType.I32,
+            raw_dtype=GGMLQuantizationType.I64,
         )
         print(
-            f"  {key_gpu_neu_mask} => shape: {ffn_gpu_neu_mask.shape}, dtype: GGMLQuantizationType.I32, {ffn_gpu_neu_mask.nbytes / 1024 / 1024:.3f} MiB"
+            f"  {key_gpu_neu_mask} => shape: {ffn_gpu_neu_mask.shape}, dtype: GGMLQuantizationType.I64, {ffn_gpu_neu_mask.nbytes / 1024 / 1024:.3f} MiB"
         )
 
         # b) ffn_gpu_neu_idx (索引列表)
-        ffn_gpu_neu_idx = np.sort(np.array(list(gpu_neurons_set), dtype=np.int32))
+        ffn_gpu_neu_idx = np.sort(np.array(list(gpu_neurons_set), dtype=np.int64))
         key_gpu_neuron_idx = f"blk.{layer_idx}.ffn_gpu_neu_idx"
         gguf_writer.add_tensor(
             name=key_gpu_neuron_idx,
             tensor=ffn_gpu_neu_idx,
             raw_shape=ffn_gpu_neu_idx.shape[::-1],
-            raw_dtype=GGMLQuantizationType.I32,
+            raw_dtype=GGMLQuantizationType.I64,
         )
         print(
-            f"  {key_gpu_neuron_idx} => shape: {ffn_gpu_neu_idx.shape}, dtype: GGMLQuantizationType.I32, {ffn_gpu_neu_idx.nbytes / 1024 / 1024:.3f} MiB"
+            f"  {key_gpu_neuron_idx} => shape: {ffn_gpu_neu_idx.shape}, dtype: GGMLQuantizationType.I64, {ffn_gpu_neu_idx.nbytes / 1024 / 1024:.3f} MiB"
         )
 
         # c) ffn_gpu_group_mask
-        ffn_gpu_group_mask = np.zeros(self.group_count, dtype=np.int32)
+        ffn_gpu_group_mask = np.zeros(self.group_count, dtype=np.int64)
         if gpu_group_set:
             selected_indices = list(gpu_group_set)
             ffn_gpu_group_mask[selected_indices] = 1
@@ -124,38 +124,38 @@ class NeuronPartition:
             name=key_ffn_gpu_group_mask,
             tensor=ffn_gpu_group_mask,
             raw_shape=ffn_gpu_group_mask.shape[::-1],
-            raw_dtype=GGMLQuantizationType.I32,
+            raw_dtype=GGMLQuantizationType.I64,
         )
         print(
-            f"  {key_ffn_gpu_group_mask} => shape: {ffn_gpu_group_mask.shape}, dtype: GGMLQuantizationType.I32, {ffn_gpu_group_mask.nbytes / 1024 / 1024:.3f} MiB"
+            f"  {key_ffn_gpu_group_mask} => shape: {ffn_gpu_group_mask.shape}, dtype: GGMLQuantizationType.I64, {ffn_gpu_group_mask.nbytes / 1024 / 1024:.3f} MiB"
         )
 
         # d) ffn_gpu_group_idx (组ID列表)
-        ffn_gpu_group_idx = np.array(list(gpu_group_set), dtype=np.int32)
+        ffn_gpu_group_idx = np.array(list(gpu_group_set), dtype=np.int64)
         key_ffn_gpu_group_idx = f"blk.{layer_idx}.ffn_gpu_group_idx"
         gguf_writer.add_tensor(
             name=key_ffn_gpu_group_idx,
             tensor=ffn_gpu_group_idx,
             raw_shape=ffn_gpu_group_idx.shape[::-1],
-            raw_dtype=GGMLQuantizationType.I32,
+            raw_dtype=GGMLQuantizationType.I64,
         )
         print(
-            f"  {key_ffn_gpu_group_idx} => shape: {ffn_gpu_group_idx.shape}, dtype: GGMLQuantizationType.I32, {ffn_gpu_group_idx.nbytes / 1024 / 1024:.3f} MiB"
+            f"  {key_ffn_gpu_group_idx} => shape: {ffn_gpu_group_idx.shape}, dtype: GGMLQuantizationType.I64, {ffn_gpu_group_idx.nbytes / 1024 / 1024:.3f} MiB"
         )
 
         # e) ffn_neuron_to_group_map (神经元 -> 组ID 的映射)
         ffn_neuron_to_group_map = np.array(
-            layer_data["neuron_to_group_map"], dtype=np.int32
+            layer_data["neuron_to_group_map"], dtype=np.int64
         )
         key_ffn_neuron_to_group_map = f"blk.{layer_idx}.ffn_neuron_to_group_map"
         print(
-            f"  {key_ffn_neuron_to_group_map} => shape: {ffn_neuron_to_group_map.shape}, dtype: GGMLQuantizationType.I32, {ffn_neuron_to_group_map.nbytes / 1024 / 1024:.3f} MiB"
+            f"  {key_ffn_neuron_to_group_map} => shape: {ffn_neuron_to_group_map.shape}, dtype: GGMLQuantizationType.I64, {ffn_neuron_to_group_map.nbytes / 1024 / 1024:.3f} MiB"
         )
         gguf_writer.add_tensor(
             name=key_ffn_neuron_to_group_map,
             tensor=ffn_neuron_to_group_map,
             raw_shape=ffn_neuron_to_group_map.shape[::-1],
-            raw_dtype=GGMLQuantizationType.I32,
+            raw_dtype=GGMLQuantizationType.I64,
         )
 
 

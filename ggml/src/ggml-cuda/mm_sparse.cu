@@ -13,7 +13,7 @@ static __global__ void mul_mat_vec_sparse(
 
         const int64_t   ncols2
 ) {
-    const int64_t row         = blockIdx.x;  // (0, nrows)
+    const int64_t row         = blockIdx.x;  // (0, num_gpu_neurons)
     const int     tid         = threadIdx.x; // (0, 256)
 
     int neu = gpu_neu_idx ? gpu_neu_idx[row] : row; // (one of the neurons(on gpu) original index)
@@ -118,7 +118,7 @@ static __global__ void mul_mat_batch_sparse(
     
     const int64_t ncols2      = ncols/2;
 
-    const int64_t row         = blockIdx.x;  // (0, nrows)
+    const int64_t row         = blockIdx.x;  // (0, num_gpu_neurons)
     const int64_t s1col_b     = blockIdx.y;   // (0, scr1_ncols) the block that responsible for the specific token in batch
     const int     tid         = threadIdx.x; // (0, 256)
 
@@ -228,14 +228,14 @@ static __global__ void print(
     const int64_t src1_ncols)
 {
     if (blockIdx.x == 0 && threadIdx.x == 0) {
-        printf("\n=== sparse_idx ===\n");
-        for (int i = 0; i < nrows && (i % 100)==0; i++) {
-            printf("sparse_idx[%d] = %f\n", i, sparse_idx[i]);
-        }
+        // printf("\n=== sparse_idx ===\n");
+        // for (int i = 0; i < nrows && (i % 100)==0; i++) {
+        //     printf("sparse_idx[%d] = %f\n", i, sparse_idx[i]);
+        // }
 
         if(gpu_neu_idx){
             printf("=== gpu_neu_idx ===\n");
-            for (int i = 0; i < nrows && (i % 100)==0; i++) {
+            for (int i = 0; i < nrows; i++) {
                 printf("gpu_neu_idx[%d] = %lld\n", i, gpu_neu_idx[i]);
             }            
         }
@@ -246,7 +246,7 @@ static __global__ void print(
 template <typename T, typename type_acc>
 static void launch_mul_mat_cuda_sparse(
         const T * x, const float * y, const float * sparse_idx, const int64_t * gpu_neu_idx, float * dst,
-        const int64_t ncols, const int64_t nrows, const int64_t src1_ncols, cudaStream_t stream) {
+        const int64_t ncols, const int64_t nrows, const int64_t src1_ncols, int64_t num_gpu_neurons,cudaStream_t stream) {
 
     // print<<<1, 32, 0, stream>>>(sparse_idx, gpu_neu_idx, ncols, nrows, src1_ncols);
     
@@ -275,7 +275,7 @@ static void launch_mul_mat_cuda_sparse(
 
     if (src1_ncols == 1) {
         // vector case
-        dim3 grid(nrows, 1, 1);
+        dim3 grid(num_gpu_neurons, 1, 1);
         switch (block_size_best) {
             case 32:
                 mul_mat_vec_sparse<T,type_acc,32><<<grid, dim3(32,1,1), smem, stream>>>(
@@ -313,7 +313,7 @@ static void launch_mul_mat_cuda_sparse(
         }
     } else {
         // Batch case
-        dim3 grid(nrows, src1_ncols, 1);
+        dim3 grid(num_gpu_neurons, src1_ncols, 1);
         switch (block_size_best) {
             case 32:
                 mul_mat_batch_sparse<T,type_acc,32><<<grid, dim3(32,1,1), smem, stream>>>(
@@ -355,17 +355,17 @@ static void launch_mul_mat_cuda_sparse(
 template<typename T>
 static void mul_mat_cuda_sparse(
         const T * x, const float * y, const float * sparse_idx, const int64_t * gpu_neu_idx, float * dst,
-        const int64_t ncols, const int64_t nrows, const int64_t src1_ncols,
+        const int64_t ncols, const int64_t nrows, const int64_t src1_ncols, const int64_t num_gpu_neurons,
         enum ggml_prec prec, cudaStream_t stream) {
     if constexpr(std::is_same<T, half>::value) {
         if (prec == GGML_PREC_DEFAULT) {
             launch_mul_mat_cuda_sparse<T, half>
-                (x, y, sparse_idx, gpu_neu_idx, dst, ncols, nrows, src1_ncols, stream);
+                (x, y, sparse_idx, gpu_neu_idx, dst, ncols, nrows, src1_ncols, num_gpu_neurons, stream);
             return;
         }
     }
     launch_mul_mat_cuda_sparse<T, float>
-        (x, y, sparse_idx, gpu_neu_idx, dst, ncols, nrows, src1_ncols, stream);
+        (x, y, sparse_idx, gpu_neu_idx, dst, ncols, nrows, src1_ncols, num_gpu_neurons, stream);
 }
 
 // GTODO: this is very hacky, we need to add more safety check later
@@ -426,6 +426,7 @@ void ggml_cuda_op_mul_mat_sparse(
     // GTODO:  this is a hack, we encounter sigsegv error when printf sparse_idx[0]
     float * sparse_idx = static_cast<float *>(ggml_cuda_get_tensor_data(dst->src[2]));
     int64_t * gpu_neu_idx = dst->src[3] != NULL ? static_cast<int64_t *>(ggml_cuda_get_tensor_data(dst->src[3])) : NULL;
+    int64_t num_gpu_neurons = dst->src[3] ? dst->src[3]->ne[0] : nrows;
     // GGML_ABORT("debugging");
     // // for(int i = 0;i < 100;i++){
     //      printf("sparse_idx[%d]=%f\n",0,sparse_idx[0]);
@@ -443,15 +444,15 @@ void ggml_cuda_op_mul_mat_sparse(
     switch (src0->type) {
         case GGML_TYPE_F32: {
             const float * src0_d = (const float *) src0_dd_i;
-            mul_mat_cuda_sparse(src0_d, src1_ddf_i, sparse_idx, gpu_neu_idx, dst_dd_i, ncols, nrows, src1_ncols, prec, stream);
+            mul_mat_cuda_sparse(src0_d, src1_ddf_i, sparse_idx, gpu_neu_idx, dst_dd_i, ncols, nrows, src1_ncols, num_gpu_neurons, prec, stream);
         } break;
         case GGML_TYPE_F16: {
             const half * src0_d = (const half *) src0_dd_i;
-            mul_mat_cuda_sparse(src0_d, src1_ddf_i, sparse_idx, gpu_neu_idx, dst_dd_i, ncols, nrows, src1_ncols, prec, stream);
+            mul_mat_cuda_sparse(src0_d, src1_ddf_i, sparse_idx, gpu_neu_idx, dst_dd_i, ncols, nrows, src1_ncols, num_gpu_neurons, prec, stream);
         } break;
         case GGML_TYPE_BF16: {
             const nv_bfloat16 * src0_d = (const nv_bfloat16 *) src0_dd_i;
-            mul_mat_cuda_sparse(src0_d, src1_ddf_i, sparse_idx, gpu_neu_idx, dst_dd_i, ncols, nrows, src1_ncols, prec, stream);
+            mul_mat_cuda_sparse(src0_d, src1_ddf_i, sparse_idx, gpu_neu_idx, dst_dd_i, ncols, nrows, src1_ncols, num_gpu_neurons, prec, stream);
         } break;
         default:
             GGML_ABORT("unsupported type: %s", ggml_type_name(src0->type));

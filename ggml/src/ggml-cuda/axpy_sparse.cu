@@ -22,7 +22,9 @@ static __global__ void mul_mat_axpy_sparse(
     const int neu = gpu_neu_idx ? gpu_neu_idx[blk_idx] : blk_idx;
     const int tid = threadIdx.x; // range from [0,31]
 
-    if (y[neu] == 0 || sparse_idx[neu] < 0.5f) {
+    float alpha = y[neu];
+
+    if (fabsf(alpha) < 1e-6f || sparse_idx[neu] < 0.5f) {
         // if (tid == 0) dst[gpu_neu] = 0.0f;
         return;
     }
@@ -49,9 +51,9 @@ static __global__ void mul_mat_axpy_sparse(
         v.y = x[vx_i + 1];
 
         // matrix multiplication, process 2 vals per j iter
-        tmp = v.x * y[neu];
+        tmp = v.x * alpha;
         shared_dst[col] = tmp;  // share_dst[col] = tmp
-        tmp = v.y * y[neu];
+        tmp = v.y * alpha;
         shared_dst[col+1] = tmp; // share_dst[col+1] = tmp       
     }
     __syncthreads();
@@ -74,17 +76,19 @@ static __global__ void mul_mat_axpy_sparse_batch(
     ) {
 
     const int blk_idx   = blockIdx.x;          // block index, range from [0, nrows]
-    const int token_idx = blockIdx.y;         // parallel input index, range from [0, src_ncols]
+    const int token_idx = blockIdx.y;         // parallel input index, range from [0, src1_ncols]
     const int thds_per_blk = blockDim.x;     // number of threads per block
 
-    y           += token_idx * ncols;
+    y           += token_idx * nrows;
     dst         += token_idx * ncols;
     sparse_idx  += token_idx * nrows;
 
     const int neu = gpu_neu_idx ? gpu_neu_idx[blk_idx] : blk_idx;
     const int tid = threadIdx.x; // range from [0,31]
 
-    if (y[neu] == 0 || sparse_idx[neu] < 0.5f) {
+    float alpha = y[neu];
+
+    if (fabsf(alpha) < 1e-6f || sparse_idx[neu] < 0.5f) {
         // if (tid == 0) dst[gpu_neu] = 0.0f;
         return;
     }
@@ -111,9 +115,9 @@ static __global__ void mul_mat_axpy_sparse_batch(
         v.y = x[vx_i + 1];
 
         // matrix multiplication, process 2 vals per j iter
-        tmp = v.x * y[neu];
+        tmp = v.x * alpha;
         shared_dst[col] = tmp;  // share_dst[col] = tmp
-        tmp = v.y * y[neu];
+        tmp = v.y * alpha;
         shared_dst[col+1] = tmp; // share_dst[col+1] = tmp       
     }
     __syncthreads();
@@ -127,18 +131,19 @@ static __global__ void mul_mat_axpy_sparse_batch(
 template <typename T, typename type_acc>
 static void launch_mul_mat_axpy_cuda_sparse(
         const T * x, const float * y, const float * sparse_idx, const int64_t * gpu_neu_idx, float * dst,
-        const int64_t ncols, const int64_t nrows, const int64_t src_ncols, cudaStream_t stream) {
+        const int64_t ncols, const int64_t nrows, const int64_t src_ncols, const int64_t num_gpu_neurons, cudaStream_t stream) {
     
+    int64_t num_blocks = num_gpu_neurons == 0 ? nrows : num_gpu_neurons;
     // vec_axpy
     if(src_ncols == 1){
         // the lanucher for powerinfer kernel: 
-        const dim3 block_nums(nrows, 1, 1);
+        const dim3 block_nums(num_blocks, 1, 1);
         const dim3 block_dims(WARP_SIZE, 1, 1);
 
         mul_mat_axpy_sparse<<<block_nums, block_dims, ncols*sizeof(float), stream>>>(x, y, dst, ncols, nrows, gpu_neu_idx, sparse_idx);
     }
     else{ // batch_axpy
-        const dim3 block_nums(nrows, src_ncols, 1);
+        const dim3 block_nums(num_blocks, src_ncols, 1);
         const dim3 block_dims(WARP_SIZE, 1, 1);
         mul_mat_axpy_sparse_batch<<<block_nums, block_dims, ncols*sizeof(float), stream>>>(x, y, dst, ncols, nrows, gpu_neu_idx, sparse_idx);
     }
@@ -148,17 +153,17 @@ static void launch_mul_mat_axpy_cuda_sparse(
 template<typename T>
 static void mul_mat_axpy_cuda_sparse(
         const T * x, const float * y, const float * sparse_idx, const int64_t * gpu_neu_idx, float * dst,
-        const int64_t ncols, const int64_t nrows, const int64_t src_ncols,
+        const int64_t ncols, const int64_t nrows, const int64_t src_ncols, const int64_t num_gpu_neurons,
         enum ggml_prec prec, cudaStream_t stream) {
     if constexpr(std::is_same<T, half>::value) {
         if (prec == GGML_PREC_DEFAULT) {
             launch_mul_mat_axpy_cuda_sparse<T, half>
-                (x, y, sparse_idx, gpu_neu_idx, dst, ncols, nrows, src_ncols, stream);
+                (x, y, sparse_idx, gpu_neu_idx, dst, ncols, nrows, src_ncols, num_gpu_neurons, stream);
             return;
         }
     }
     launch_mul_mat_axpy_cuda_sparse<T, float>
-        (x, y, sparse_idx, gpu_neu_idx, dst, ncols, nrows, src_ncols, stream);
+        (x, y, sparse_idx, gpu_neu_idx, dst, ncols, nrows, src_ncols, num_gpu_neurons, stream);
 }
 
 // GTODO: this is very hacky, we need to add more safety check later
@@ -212,6 +217,11 @@ void ggml_cuda_op_axpy_sparse(
 
     float * sparse_idx = static_cast<float *>(ggml_cuda_get_tensor_data_axpy(dst->src[2]));
     int64_t * gpu_neu_idx = dst->src[3] != NULL ? static_cast<int64_t *>(ggml_cuda_get_tensor_data_axpy(dst->src[3])) : NULL;
+    
+    int64_t num_gpu_neurons = 0;
+    if (dst->src[3]){
+        num_gpu_neurons = dst->src[3]->ne[0];
+    } 
 
     const int cc = ggml_cuda_info().devices[ggml_cuda_get_device()].cc;
     const enum ggml_prec prec = fast_fp16_available(cc) ? ggml_prec(dst->op_params[0]) : GGML_PREC_F32;
@@ -219,15 +229,15 @@ void ggml_cuda_op_axpy_sparse(
     switch (src0->type) {
         case GGML_TYPE_F32: {
             const float * src0_d = (const float *) src0_dd_i;
-            mul_mat_axpy_cuda_sparse(src0_d, src1_ddf_i, sparse_idx, gpu_neu_idx, dst_dd_i, ncols, nrows, src1_ncols, prec, stream);
+            mul_mat_axpy_cuda_sparse(src0_d, src1_ddf_i, sparse_idx, gpu_neu_idx, dst_dd_i, ncols, nrows, src1_ncols, num_gpu_neurons, prec, stream);
         } break;
         case GGML_TYPE_F16: {
             const half * src0_d = (const half *) src0_dd_i;
-            mul_mat_axpy_cuda_sparse(src0_d, src1_ddf_i, sparse_idx, gpu_neu_idx, dst_dd_i, ncols, nrows, src1_ncols, prec, stream);
+            mul_mat_axpy_cuda_sparse(src0_d, src1_ddf_i, sparse_idx, gpu_neu_idx, dst_dd_i, ncols, nrows, src1_ncols, num_gpu_neurons, prec, stream);
         } break;
         case GGML_TYPE_BF16: {
             const nv_bfloat16 * src0_d = (const nv_bfloat16 *) src0_dd_i;
-            mul_mat_axpy_cuda_sparse(src0_d, src1_ddf_i, sparse_idx, gpu_neu_idx, dst_dd_i, ncols, nrows, src1_ncols, prec, stream);
+            mul_mat_axpy_cuda_sparse(src0_d, src1_ddf_i, sparse_idx, gpu_neu_idx, dst_dd_i, ncols, nrows, src1_ncols, num_gpu_neurons, prec, stream);
         } break;
         default:
             GGML_ABORT("unsupported type: %s", ggml_type_name(src0->type));

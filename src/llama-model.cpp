@@ -1525,14 +1525,14 @@ struct sparkInfer_layer_cache {
     uint64_t layer_group_size = 0; // 每层分组大小
     
     // 跟踪: 原始神经元索引 -> GPU缓存槽位索引
-    std::unordered_map<int32_t, int32_t> neuron_to_slot_map;
+    std::unordered_map<int64_t, int64_t> neuron_to_slot_map;
     
     // 跟踪: GPU缓存槽位索引 -> 原始神经元索引
-    std::vector<int32_t> slot_to_neuron_map;
+    std::vector<int64_t> slot_to_neuron_map;
 
     // 实现LRU(最近最少使用)的替换策略，存储的是【原始神经元索引】
-    std::list<int32_t> lru_tracker;
-    std::unordered_map<int32_t, std::list<int32_t>::iterator> lru_map;
+    std::list<int64_t> lru_tracker;
+    std::unordered_map<int64_t, std::list<int64_t>::iterator> lru_map;
 
     // 临时的ggml上下文，用于创建视图等临时张量
     struct ggml_context* tmp_ctx = nullptr;
@@ -1556,7 +1556,7 @@ struct sparkInfer_layer_cache {
      * @param initial_gpu_neuron_indices 初始需要加载到GPU的神经元原始索引列表。
      * @return true 如果初始化成功。
      */
-    bool init(int layer_idx, llama_layer& layer, ggml_backend_t backend, const std::vector<int32_t>& initial_gpu_neuron_indices) {
+    bool init(int layer_idx, llama_layer& layer, ggml_backend_t backend, const std::vector<int64_t>& initial_gpu_neuron_indices) {
         // init
         this->gpu_backend = backend;
         this->cpu_backend = ggml_backend_cpu_init();
@@ -1635,7 +1635,7 @@ struct sparkInfer_layer_cache {
         auto t_start = ggml_time_ms();
         this->slot_to_neuron_map.resize(neuron_cache_capacity, -1);
 
-        auto batch_copy_neurons = [&](ggml_tensor* cpu_src, ggml_tensor* gpu_dst_cache, const std::vector<int32_t>& indices) {
+        auto batch_copy_neurons = [&](ggml_tensor* cpu_src, ggml_tensor* gpu_dst_cache, const std::vector<int64_t>& indices) {
             
             const int64_t n_embd = cpu_src->ne[0];
             const size_t row_size_bytes = ggml_row_size(cpu_src->type, n_embd);
@@ -1644,7 +1644,8 @@ struct sparkInfer_layer_cache {
             std::vector<char> staging_buffer(row_size_bytes * indices.size());
             
             for (size_t i = 0; i < indices.size(); ++i) {
-                const int32_t neuron_idx = indices[i];
+                const int64_t neuron_idx = indices[i];
+                // if(i%100 == 0) printf("[DEBUG]:: layer %d, indices[%d]=%lld\n", layer_idx, i, neuron_idx);
                 
                 // 源地址：在完整CPU张量中的位置
                 char* src_ptr = (char*)cpu_src->data + neuron_idx * cpu_src->nb[1];
@@ -1665,8 +1666,8 @@ struct sparkInfer_layer_cache {
         // 更新元数据
         offloaded_bytes += ggml_nbytes(gpu_ffn_up_cache) * 3; // 每个神经元有3个矩阵
         for (size_t i = 0; i < initial_gpu_neuron_indices.size(); ++i) {
-            int32_t neuron_idx = initial_gpu_neuron_indices[i];
-            int32_t slot_idx = i;
+            int64_t neuron_idx = initial_gpu_neuron_indices[i];
+            int64_t slot_idx = i;
             update_metadata(neuron_idx, slot_idx);
         }
 
@@ -1682,11 +1683,11 @@ struct sparkInfer_layer_cache {
      * @param neuron_idx 神经元的原始索引。
      * @return int32_t 神经元在GPU缓存中的槽位索引。
      */
-    int32_t ensure_neuron_on_gpu(int32_t neuron_idx) {
+    int64_t ensure_neuron_on_gpu(int64_t neuron_idx) {
         auto it = neuron_to_slot_map.find(neuron_idx);
         if (it != neuron_to_slot_map.end()) {
             // Cache Hit: 神经元已在GPU上，更新其为最近使用
-            int32_t slot_idx = it->second;
+            int64_t slot_idx = it->second;
             lru_tracker.erase(lru_map[neuron_idx]);
             lru_tracker.push_front(neuron_idx);
             lru_map[neuron_idx] = lru_tracker.begin();
@@ -1694,10 +1695,10 @@ struct sparkInfer_layer_cache {
         }
 
         // Cache Miss: 需要换入
-        int32_t slot_to_use = -1;
+        int64_t slot_to_use = -1;
         if (neuron_to_slot_map.size() < neuron_cache_capacity) {
             // 缓存未满，找到一个空槽位
-            for(int32_t i = 0; i < (int32_t)slot_to_neuron_map.size(); ++i) {
+            for(int64_t i = 0; i < (int64_t)slot_to_neuron_map.size(); ++i) {
                 if (slot_to_neuron_map[i] == -1) {
                     slot_to_use = i;
                     break;
@@ -1705,7 +1706,7 @@ struct sparkInfer_layer_cache {
             }
         } else {
             // 缓存已满，根据LRU策略选择牺牲品
-            int32_t victim_neuron_idx = lru_tracker.back();
+            int64_t victim_neuron_idx = lru_tracker.back();
             lru_tracker.pop_back();
             
             slot_to_use = neuron_to_slot_map[victim_neuron_idx];
@@ -1727,7 +1728,7 @@ private:
     /**
      * @brief 将一个神经元从CPU复制到GPU的指定slot。
      */
-    void copy_neuron_to_gpu_slot(int32_t neuron_idx, int32_t slot_idx) {
+    void copy_neuron_to_gpu_slot(int64_t neuron_idx, int64_t slot_idx) {
         // 创建一个临时的上下文用于视图操作
         struct ggml_init_params params = { ggml_tensor_overhead() * 6, NULL, true };
         struct ggml_context* view_ctx = ggml_init(params);
@@ -1759,7 +1760,7 @@ private:
     /**
      * @brief 更新缓存的元数据。
      */
-    void update_metadata(int32_t neuron_idx, int32_t slot_idx) {
+    void update_metadata(int64_t neuron_idx, int64_t slot_idx) {
         neuron_to_slot_map[neuron_idx] = slot_idx;
         slot_to_neuron_map[slot_idx] = neuron_idx;
         lru_tracker.push_front(neuron_idx);
@@ -1795,7 +1796,7 @@ struct sparkInfer_neuron_cache_manager {
 
             // 从ffn_gpu_neu_idx读取需要加载的神经元
             struct ggml_tensor* initial_indices_tensor = layer.ffn_gpu_neu_idx;
-            std::vector<int32_t> initial_indices(initial_indices_tensor->ne[0]);
+            std::vector<int64_t> initial_indices(initial_indices_tensor->ne[0]);
             
             // 注意：这里需要从设备或主机内存中获取数据
             ggml_backend_tensor_get(initial_indices_tensor, initial_indices.data(), 0, ggml_nbytes(initial_indices_tensor));
@@ -1835,7 +1836,7 @@ struct sparkInfer_neuron_cache_manager {
      * @param required_neuron_indices 需要确保在GPU上的神经元原始索引列表。
      * @param out_gpu_slot_indices [输出参数] 填充更新后的GPU槽位索引，用于计算图。
      */
-    void prepare_hot_neurons(int layer_idx, const std::vector<int32_t>& required_neuron_indices, std::vector<int32_t>& out_gpu_slot_indices) {
+    void prepare_hot_neurons(int layer_idx, const std::vector<int64_t>& required_neuron_indices, std::vector<int64_t>& out_gpu_slot_indices) {
         if (layer_caches[layer_idx].neuron_cache_capacity == 0) return;
 
         out_gpu_slot_indices.resize(required_neuron_indices.size());
@@ -2675,7 +2676,7 @@ bool llama_model::load_sparse_tensors(llama_model_loader &ml, size_t vram_budget
 
         if (ml.use_mmap && use_mmap_buffer && buffer_from_host_ptr_supported && is_default_buft) {
             LLAMA_LOG_INFO("%s: using mmap and buffer_from_host_ptr for memory-efficient GPU/CPU buffer allocation\n", __func__);
-            for (uint32_t idx = 0; idx < ml.files.size(); idx++) {// one file is 1
+            for (uint64_t idx = 0; idx < ml.files.size(); idx++) {// one file is 1
                 // only the mmap region containing the tensors in the model is mapped to the backend buffer
                 // this is important for metal with apple silicon: if the entire model could be mapped to a metal buffer, then we could just use metal for all layers
                 // this allows using partial offloading when the model size exceeds the metal buffer size, but not the RAM size
@@ -2711,7 +2712,7 @@ bool llama_model::load_sparse_tensors(llama_model_loader &ml, size_t vram_budget
                 mlock_buf->init   (ggml_backend_buffer_get_base(buf));
                 mlock_buf->grow_to(ggml_backend_buffer_get_size(buf));
             }
-            for (uint32_t idx = 0; idx < ml.files.size(); idx++) {
+            for (uint64_t idx = 0; idx < ml.files.size(); idx++) {
                 buf_map.emplace(idx, buf);
             }
             LLAMA_LOG_INFO("%s: allocated %8.2f MiB for all files in %s buffer\n", __func__,
