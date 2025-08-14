@@ -428,6 +428,36 @@ typedef pthread_mutex_t    ggml_mutex_t;
 
 #endif
 
+// #include <nvtx3/nvToolsExt.h>
+// const uint32_t colors[] = { 0xff00ff00, 0xff0000ff, 0xffffff00, 0xffff00ff, 0xff00ffff, 0xffff0000, 0xffffffff };
+// const int num_colors = sizeof(colors)/sizeof(uint32_t);
+
+// nvtxRangeId_t nvtx_init(struct ggml_compute_params * params, char * name, char * extra_info){
+//     char full_name[64];
+//     snprintf(full_name, sizeof(full_name), "%s_%s", name, extra_info);
+
+//     int thread_id = params->ith;
+//     int color_id = thread_id%num_colors;
+
+//     nvtxEventAttributes_t eventAttrib = {0};
+//     eventAttrib.version = NVTX_VERSION;
+//     eventAttrib.size = NVTX_EVENT_ATTRIB_STRUCT_SIZE;
+
+//     // Set a color for better visibility
+//     eventAttrib.colorType = NVTX_COLOR_ARGB;
+//     eventAttrib.color = colors[color_id]; // Blue color
+
+//     // Add tensor information as message
+//     char message[256];
+//     snprintf(message, sizeof(message), "[t%d] %s ", thread_id, full_name);
+//     message[sizeof(message)-1] = '\0';
+//     eventAttrib.messageType = NVTX_MESSAGE_TYPE_ASCII;
+//     eventAttrib.message.ascii = message;
+
+//     nvtxRangeId_t id = nvtxRangeStartEx(&eventAttrib);
+//     return id;
+// }
+
 // Threadpool def
 struct ggml_threadpool {
     ggml_mutex_t mutex;       // mutex for cond.var
@@ -1536,7 +1566,7 @@ static void ggml_compute_forward_mul_mat_sparse_one_chunk(
 
                 for (int64_t ir0 = iir0; ir0 < iir0 + blck_0 && ir0 < ir0_end; ir0 += num_rows_per_vec_dot) {
                     const int64_t idx_flat = ir0 + ir1 * ne01;
-                    if (! need_compute[idx_flat]) {
+                    if (need_compute[idx_flat]!=1) {
                         continue;
                     }
                     vec_dot(ne00, &tmp[ir0 - iir0], (num_rows_per_vec_dot > 1 ? 16 : 0), src0_row + ir0 * nb01, (num_rows_per_vec_dot > 1 ? nb01 : 0), src1_col, (num_rows_per_vec_dot > 1 ? src1_col_stride : 0), num_rows_per_vec_dot);
@@ -1605,24 +1635,25 @@ static void ggml_compute_forward_mul_mat_sparse(
       incr_ptr_aligned(&wdata_cur, ggml_row_size(vec_dot_type, ggml_nelements(src1)), sizeof(int64_t));
     }
 
-    // generate the final mask that sparse compute would use in CPU kernel, store in wdata
+    // generate the final mask that sparse compute would use in CPU kernel, store in wdata, using multi-threads to generate
     int64_t * need_compute = incr_ptr_aligned(&wdata_cur, ggml_row_size(GGML_TYPE_I64, ggml_nelements(idx)), sizeof(int64_t));
 
-    if (ith == 0){
-        const size_t mask_ne = ggml_nelements(idx);
-        memset(need_compute, 0, mask_ne*sizeof(int64_t));
+    const size_t mask_ne = ggml_nelements(idx);
+    memset(need_compute, 0, mask_ne*sizeof(int64_t));
 
-        // printf("%s, nelement of idx=%lld, ne0=%lld, ne1 = %lld, ne0*ne1=%lld\n", dst->name, ggml_nelements(idx), ne0, ne1, ne1*ne0);
-        GGML_ASSERT(ggml_nelements(idx) == ne0 * ne1);
+    int ne_thd = mask_ne / nth;   // number of elements that need to be handle in one thread
+    int thd_start = ith*ne_thd;
+    int thd_end = MIN(mask_ne, (ith+1)*ne_thd);
 
-        const float   * sparse_idx  = (const float   *) idx->data;
-        const int64_t * cpu_mask    = (const int64_t *) mask->data;
+    GGML_ASSERT(ggml_nelements(idx) == ne0 * ne1);
 
-        for (size_t i = 0; i < mask_ne; i++) {
-            if (cpu_mask[i%ne01] == 0 && sparse_idx[i] >= 0.5f) {
-                need_compute[i] = 1;
-            }
-        }
+    const float   * sparse_idx  = (const float   *) idx->data;
+    const int64_t * cpu_mask    = (const int64_t *) mask->data;
+
+    for (size_t i = thd_start; i < thd_end; i++) {
+        if (cpu_mask[i%ne01] == 0 && sparse_idx[i] >= 0.5f) {
+           need_compute[i] = 1;
+       }
     }
     ggml_barrier(params->threadpool);
 
@@ -1698,6 +1729,7 @@ static void ggml_compute_forward_mul_mat_sparse(
     int current_chunk = ith;
 
     while (current_chunk < nchunk0 * nchunk1) {
+        // nvtxRangeId_t id_computing = nvtx_init(params, "computing", " ");
         const int64_t ith0 = current_chunk % nchunk0;
         const int64_t ith1 = current_chunk / nchunk0;
 
@@ -1720,7 +1752,7 @@ static void ggml_compute_forward_mul_mat_sparse(
         if (nth >= nchunk0 * nchunk1) {
             break;
         }
-
+        // nvtxRangeEnd(id_computing);
         current_chunk = atomic_fetch_add_explicit(&params->threadpool->current_chunk, 1, memory_order_relaxed);
     }
 }
@@ -2034,7 +2066,7 @@ static void ggml_compute_forward_axpy_sparse_one_chunk(
     int64_t * cpu_mask = (int64_t *)mask->data;
 
     for(int neu = start_neu; neu < end_neu; neu++){
-        char * weight_row = weight_char + neu_len_char * neu;
+        ggml_fp16_t * weight_row = (char*)(weight_char + neu_len_char * neu);
         if(cpu_mask[neu] == 1){
             continue;
         }
@@ -2279,10 +2311,10 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
             } break;
         case GGML_OP_MUL_MAT_SPARSE:
             {
-                // int t_start = ggml_time_ms();
+                // int t_start = ggml_time_us();
                 ggml_compute_forward_mul_mat_sparse(params, tensor);
-                // int t_end =ggml_time_ms();
-                // printf("[DEBUG_CPU]  mal_mat: tensor->name=%s, time=%lld\n", tensor->name, t_end-t_start);
+                // int t_end =ggml_time_us();
+                // printf("[TIMING]  mal_mat: time=%lld\n", t_end-t_start);
             } break;
         case GGML_OP_AXPY:
             {
@@ -3194,7 +3226,7 @@ struct ggml_cplan ggml_graph_plan(
                         if (node->src[1]->type != vec_dot_type) {
                             cur = ggml_row_size(vec_dot_type, ggml_nelements(node->src[1]));
                         }
-                    }
+                    }break;
                 case GGML_OP_MUL_MAT_ID:
                     {
                         cur = 0;
@@ -3317,6 +3349,8 @@ struct ggml_cplan ggml_graph_plan(
     return cplan;
 }
 
+
+
 static thread_ret_t ggml_graph_compute_thread(void * data) {
     struct ggml_compute_state * state = (struct ggml_compute_state *) data;
     struct ggml_threadpool    * tp    = state->threadpool;
@@ -3336,8 +3370,11 @@ static thread_ret_t ggml_graph_compute_thread(void * data) {
 
     for (int node_n = 0; node_n < cgraph->n_nodes && atomic_load_explicit(&tp->abort, memory_order_relaxed) != node_n; node_n++) {
         struct ggml_tensor * node = cgraph->nodes[node_n];
-
+        
+        // add nvtx for nsys
+        // nvtxRangeId_t id = nvtx_init(&params, node->name, "CPU");
         ggml_compute_forward(&params, node);
+        // nvtxRangeEnd(id);
 
         if (state->ith == 0 && cplan->abort_callback &&
                 cplan->abort_callback(cplan->abort_callback_data)) {

@@ -1568,6 +1568,7 @@ struct sparkInfer_layer_cache {
         this->cpu_ffn_up     = layer.ffn_up;
         this->cpu_ffn_down_t = layer.ffn_down_t;
         
+        // GTODO: fix here
         this->layer_neuron_count = cpu_ffn_down_t->ne[0]; // 每层神经元总数
         const int64_t n_ffn = cpu_ffn_down_t->ne[1]; // FFN intermidiate_dim
         this->layer_group_count = cpu_ffn_down_t->ne[1]; // 每层分组总数
@@ -1580,7 +1581,7 @@ struct sparkInfer_layer_cache {
         ffn_gpu_group_idx = layer.ffn_gpu_group_idx;
         ffn_gpu_group_mask = layer.ffn_gpu_group_mask;
         ffn_neuron_to_group_map = layer.ffn_neuron_to_group_map;
-        
+
         // LLAMA_LOG_INFO("%s: neuron_cache_capacity: %d, n_ffn: %d\n", __func__, neuron_cache_capacity, n_ffn);
         GGML_ASSERT(neuron_cache_capacity <= n_ffn && "we required neuron_cache_capacity <= n_ffn");
 
@@ -1650,7 +1651,6 @@ struct sparkInfer_layer_cache {
                 
                 for (size_t i = 0; i < indices.size(); ++i) {
                     const int64_t neuron_idx = indices[i];
-                    // if(i%100 == 0) printf("[DEBUG]:: layer %d, indices[%d]=%lld\n", layer_idx, i, neuron_idx);
                     
                     // 源地址：在完整CPU张量中的位置
                     char* src_ptr = (char*)cpu_src->data + neuron_idx * cpu_src->nb[1];
@@ -1670,7 +1670,7 @@ struct sparkInfer_layer_cache {
         batch_copy_neurons(cpu_ffn_down_t, gpu_ffn_down_t_cache, initial_gpu_neuron_indices, full_gpu);
 
         // 更新元数据
-        offloaded_bytes += ggml_nbytes(gpu_ffn_up_cache) * (full_gpu ? 3 : 2); // 每个神经元有3个矩阵
+        offloaded_bytes += ggml_nbytes(gpu_ffn_up_cache) * (has_gate ? 3 : 2); // 每个神经元有3个矩阵
         for (size_t i = 0; i < initial_gpu_neuron_indices.size(); ++i) {
             int64_t neuron_idx = initial_gpu_neuron_indices[i];
             int64_t slot_idx = i;
@@ -1804,7 +1804,7 @@ struct sparkInfer_neuron_cache_manager {
             struct ggml_tensor* initial_indices_tensor = layer.ffn_gpu_neu_idx;
             std::vector<int64_t> initial_indices(initial_indices_tensor->ne[0]);
             
-            // 注意：这里需要从设备或主机内存中获取数据
+            // 注意：这里需要从设备或主机内存中获取数据 TAG
             ggml_backend_tensor_get(initial_indices_tensor, initial_indices.data(), 0, ggml_nbytes(initial_indices_tensor));
             
             if (!layer_caches[i].init(i ,layer, gpu_backend, initial_indices)) {
@@ -2148,7 +2148,7 @@ static bool sparkinfer_load_gpu_split_with_budget(llama_model_loader & ml, llama
     }
 
     // Generate GPU split
-    std::string activation_path = std::string(model_basedir)+"/activation";
+    std::string activation_path = std::string(model_basedir)+"/activation";    
 
     // Calculate solver parameters
     ggml_tensor * ffn_up = model.layers[0].ffn_up;
