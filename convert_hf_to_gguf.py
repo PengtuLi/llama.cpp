@@ -2022,13 +2022,19 @@ class ReluMLP(torch.nn.Module):
     @staticmethod
     def load_from_file(model_file: Path, bias: bool):
         state_dict = torch.load(model_file, map_location="cpu", weights_only=True)
-        state_dict_fp16 = {key: value.to(torch.float16) for key, value in state_dict.items()}
-        hidden_size, input_size = state_dict_fp16["pred_up.weight"].shape
-        output_size, _ = state_dict_fp16["pred_down.weight"].shape
+        
+        # here we need to change the tensor name in model{i}.pt into ffn_pred_up/down
+        # usually in model{i}.pt, tensor names are pred_up/down, change if don't
+        mapped = {}
+        for k, v in state_dict.items():
+            newk = k.replace("pred_up", "ffn_pred_up").replace("pred_down", "ffn_pred_down") # replace pred_up/down as ffn_pred_up/down
+            mapped[newk] = v.to(torch.float16)
+
+        hidden_size, input_size = mapped["ffn_pred_up.weight"].shape
+        output_size, _ = mapped["ffn_pred_down.weight"].shape
         mlp = ReluMLP(input_size, hidden_size, output_size, bias)
-        # mlp.load_state_dict(state_dict_fp16)
-        mlp.load_state_dict(state_dict_fp16, strict=False)
-        return mlp, hidden_size
+        mlp.load_state_dict(mapped, strict=False)
+        return mlp, int(hidden_size)
 
 @ModelBase.register("ProSparseLLamaForCausalLM")
 class ProSparseLlamaModel(LlamaModel):
