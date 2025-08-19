@@ -29,6 +29,7 @@
 #include <ggml-cuda.h>
 #include <list>
 #include <omp.h>
+#include <inttypes.h>
 
 const char * llm_type_name(llm_type type) {
     switch (type) {
@@ -1486,6 +1487,79 @@ void llama_model::load_vocab(llama_model_loader & ml) {
 
 /*  ----------offline split----------  */
 
+void debug_print_tensor_i64_to_file(FILE* log_file, const struct ggml_tensor* tensor) {
+    if (!log_file) {
+        return;
+    }
+
+    if (!tensor) {
+        fprintf(log_file, "debug_print_tensor_i64: tensor is NULL\n");
+        return;
+    }
+
+    // 检查类型 (这部分不变)
+    if (tensor->type != GGML_TYPE_I64) {
+        fprintf(log_file, "debug_print_tensor_i64: tensor '%s' is not INT64 (type = %d)\n", tensor->name, tensor->type);
+        return;
+    }
+
+    // 检查是否为一维
+    const int ne0 = tensor->ne[0];  // 第一维大小
+    const int ne1 = tensor->ne[1];
+    const int ne2 = tensor->ne[2];
+    const int ne3 = tensor->ne[3];
+
+    if (ne1 != 1 || ne2 != 1 || ne3 != 1) {
+        fprintf(log_file, "debug_print_tensor_i64: tensor '%s' is not 1D (shape: %d x %d x %d x %d)\n", tensor->name, ne0, ne1, ne2, ne3);
+        return;
+    }
+
+    const int64_t* data_to_print;
+    int64_t* cpu_buffer = NULL; // 用于存放从GPU拷贝回来的数据的临时缓冲区
+
+    // 检查张量是否在主机（CPU）内存中
+    // 如果 tensor->buffer 为 NULL，则它也在主机内存中
+    if (tensor->buffer == NULL || ggml_backend_buffer_is_host(tensor->buffer)) {
+        // 如果在 CPU 上，直接使用它的数据指针
+        data_to_print = (const int64_t*)tensor->data;
+    } else {
+        // 如果在 GPU 上，需要将数据拷贝回 CPU
+        const size_t tensor_size_bytes = ggml_nbytes(tensor);
+
+        // 1. 在 CPU 上分配一个临时缓冲区
+        cpu_buffer = (int64_t*)malloc(tensor_size_bytes);
+        if (!cpu_buffer) {
+            fprintf(log_file, "debug_print_tensor_i64: failed to allocate CPU buffer for tensor '%s'\n", tensor->name);
+            return;
+        }
+
+        // 2. 从 GPU (tensor->data) 拷贝数据到 CPU (cpu_buffer)
+        // ggml_backend_tensor_get 会自动处理不同后端的拷贝
+        ggml_backend_tensor_get(tensor, cpu_buffer, 0, tensor_size_bytes);
+
+        // 3. 让我们的打印指针指向这个新的 CPU 缓冲区
+        data_to_print = cpu_buffer;
+    }
+
+    if (!data_to_print) {
+        fprintf(log_file, "debug_print_tensor_i64: tensor '%s' data is NULL after backend check\n", tensor->name);
+        if (cpu_buffer) free(cpu_buffer); // 如果分配了内存，记得释放
+        return;
+    }
+
+    fprintf(log_file, "ggml_tensor name(%s) (INT64, 1D, size = %d):\n[", tensor->name, ne0);
+    for (int i = 0; i < ne0; i++) {
+        fprintf(log_file, "%" PRId64, data_to_print[i]);
+        if (i < ne0 - 1) fprintf(log_file, ", ");
+    }
+    fprintf(log_file, "]\n");
+
+    // 如果我们为 GPU 数据分配了临时缓冲区，现在就释放它
+    if (cpu_buffer) {
+        free(cpu_buffer);
+    }
+}
+
 // GTODO: need to consider no gate weight
 /**
  * @brief 管理单个层中FFN权重神经元的GPU缓存。
@@ -1556,7 +1630,7 @@ struct sparkInfer_layer_cache {
      * @param initial_gpu_neuron_indices 初始需要加载到GPU的神经元原始索引列表。
      * @return true 如果初始化成功。
      */
-    bool init(int layer_idx, llama_layer& layer, ggml_backend_t backend, const std::vector<int64_t>& initial_gpu_neuron_indices) {
+    bool init(int layer_idx, llama_model& model, llama_layer& layer, ggml_backend_t backend, const std::vector<int64_t>& initial_gpu_neuron_indices) {
         // init
         this->gpu_backend = backend;
         this->cpu_backend = ggml_backend_cpu_init();
@@ -1568,11 +1642,9 @@ struct sparkInfer_layer_cache {
         this->cpu_ffn_up     = layer.ffn_up;
         this->cpu_ffn_down_t = layer.ffn_down_t;
         
-        // GTODO: fix here
-        this->layer_neuron_count = cpu_ffn_down_t->ne[0]; // 每层神经元总数
-        const int64_t n_ffn = cpu_ffn_down_t->ne[1]; // FFN intermidiate_dim
-        this->layer_group_count = cpu_ffn_down_t->ne[1]; // 每层分组总数
-        this->layer_group_size = cpu_ffn_down_t->ne[2]; // 每层分组大小
+        this->layer_neuron_count = model.layer_neuron_count; // 每层神经元总数
+        this->layer_group_size = model.layer_group_size; // 每层分组大小
+        this->layer_group_count = model.layer_group_count; // 每层分组数量
         this->neuron_cache_capacity = initial_gpu_neuron_indices.size();
         if (this->neuron_cache_capacity == 0) return true; // 无需卸载
 
@@ -1582,8 +1654,25 @@ struct sparkInfer_layer_cache {
         ffn_gpu_group_mask = layer.ffn_gpu_group_mask;
         ffn_neuron_to_group_map = layer.ffn_neuron_to_group_map;
 
-        // LLAMA_LOG_INFO("%s: neuron_cache_capacity: %d, n_ffn: %d\n", __func__, neuron_cache_capacity, n_ffn);
-        GGML_ASSERT(neuron_cache_capacity <= n_ffn && "we required neuron_cache_capacity <= n_ffn");
+        /* debug info */ 
+        FILE* log_file = fopen("debug_split_info.log", "a");
+        if (log_file == NULL) {
+            // 如果文件打开失败，可以打印一个错误到 stderr 然后继续，或者直接退出
+            perror("Failed to open log file");
+            // return; // 或者根据你的错误处理逻辑决定是否返回
+        }
+        std::time_t result = std::time(nullptr);
+        fprintf(log_file, "\n--- Debugging Layer %d split info into file, timestamp %s ---", layer_idx, std::ctime(&result)); // 添加一些上下文信息
+        debug_print_tensor_i64_to_file(log_file, ffn_gpu_neu_idx);
+        debug_print_tensor_i64_to_file(log_file, ffn_gpu_neu_mask);
+        debug_print_tensor_i64_to_file(log_file, ffn_gpu_group_idx);
+        debug_print_tensor_i64_to_file(log_file, ffn_gpu_group_mask);
+        debug_print_tensor_i64_to_file(log_file, ffn_neuron_to_group_map);
+        fflush(log_file);
+        fclose(log_file);
+        /* debug info end */ 
+
+        GGML_ASSERT(neuron_cache_capacity <= layer_neuron_count && "we required neuron_cache_capacity <= layer_neuron_count");
 
         // 1. 计算并分配ffn buffer size
         const size_t single_mat_size = ggml_backend_buft_get_alloc_size(
@@ -1591,7 +1680,7 @@ struct sparkInfer_layer_cache {
             cpu_ffn_down_t // 使用其中一个矩阵作为尺寸参考
         );
         // 我们只缓存部分行，所以要按比例计算
-        const size_t single_cache_size = (single_mat_size / n_ffn) * neuron_cache_capacity;
+        const size_t single_cache_size = (single_mat_size / layer_neuron_count) * neuron_cache_capacity;
         
         // 总大小 = 3个矩阵的缓存大小之和
         const size_t total_gpu_buffer_size = single_cache_size * 3;
@@ -1807,7 +1896,7 @@ struct sparkInfer_neuron_cache_manager {
             // 注意：这里需要从设备或主机内存中获取数据 TAG
             ggml_backend_tensor_get(initial_indices_tensor, initial_indices.data(), 0, ggml_nbytes(initial_indices_tensor));
             
-            if (!layer_caches[i].init(i ,layer, gpu_backend, initial_indices)) {
+            if (!layer_caches[i].init(i ,p_model, layer, gpu_backend, initial_indices)) {
                 LLAMA_LOG_ERROR("%s: failed to initialize cache for layer %d\n", __func__, i);
                 throw std::runtime_error("Failed to initialize layer cache");
             }
@@ -1916,15 +2005,16 @@ struct sparkinfer_split_loader {
 
     sparkinfer_split_loader(const std::string & fname) : fname(fname) {
         struct gguf_init_params params = {
-            /*.no_alloc = */ true,
-            /*.ctx      = */ &ctx_meta,
+            /* .no_alloc = */ false,
+            /* .ctx      = */ &ctx_meta,
         };
 
         ctx_gguf = gguf_init_from_file(fname.c_str(), params);
         if (!ctx_gguf) {
-            throw std::runtime_error("无法打开分割文件: " + fname);
+            throw std::runtime_error("无法打开或加载分割文件: " + fname);
         }
 
+        // 读取元数据
         int key_idx = gguf_find_key(ctx_gguf, "split.vram_capacity");
         if (key_idx >= 0) {
             vram_required = gguf_get_val_u64(ctx_gguf, key_idx);
@@ -1949,21 +2039,19 @@ struct sparkinfer_split_loader {
         layer_group_size = layer_neuron_count / layer_group_count;
         n_tensors = gguf_get_n_tensors(ctx_gguf);
         
-        LLAMA_LOG_INFO("%s: 成功加载分割文件 '%s' 的信息. 张量数量: %d, VRAM需求: %zu 字节\n",
+        LLAMA_LOG_INFO("%s: 成功加载分割文件 '%s' 的信息和数据. 张量数量: %d, VRAM需求: %zu 字节\n",
             __func__, fname.c_str(), n_tensors, (size_t)vram_required);
     }
 
     ~sparkinfer_split_loader() {
         if (ctx_gguf) gguf_free(ctx_gguf);
-        if (ctx_meta) ggml_free(ctx_meta);
-        // if (ctx_cpu_tensors) ggml_free(ctx_cpu_tensors);
-        // if (ctx_gpu_tensors) ggml_free(ctx_gpu_tensors);
+        if (ctx_meta) ggml_free(ctx_meta); // ctx_meta 现在管理着数据，ggml_free会释放它
+        // ctx_cpu_tensors 和 ctx_gpu_tensors 会被模型接管，由模型管理其生命周期
         
+        // 分配的缓冲区也应由模型管理
         // for (auto & buffer : allocated_buffers) {
-        //     LLAMA_LOG_WARN("%s: !!!!!!!!!!!!!!!!释放分配的idx缓冲区!!!!!!!!!!!!!!!! %p\n", __func__, buffer);
         //     ggml_backend_buffer_free(buffer);
         // }
-
     }
 
     /**
@@ -1996,14 +2084,14 @@ struct sparkinfer_split_loader {
             throw std::runtime_error("无法初始化CPU/GPU张量上下文");
         }
 
-        // 2. 遍历层，创建张量元数据并分配到正确的上下文中
+        // 2. 遍历层，创建目标张量元数据并分配到正确的上下文中
         for (int il = 0; il < n_layers; ++il) {
             llama_layer & layer = model.layers[il];
             
             struct ggml_tensor* temp_neu_idx_meta = get_tensor_meta_from_gguf(il, "ffn_gpu_neu_idx");
             if (!temp_neu_idx_meta) throw std::runtime_error("无法从GGUF获取 ffn_gpu_neu_idx 元数据");
 
-            int64_t initial_gpu_neurons = temp_neu_idx_meta->ne[0];// 0 to n_neurons
+            int64_t initial_gpu_neurons = temp_neu_idx_meta->ne[0];
 
             bool offload_layer = gpu_backend && initial_gpu_neurons > 0;
             layer.gpu_offload_ratio = float(initial_gpu_neurons) / float(layer_neuron_count);
@@ -2011,10 +2099,9 @@ struct sparkinfer_split_loader {
 
             LLAMA_LOG_INFO("%s: layer %2d: offload %.2f%% to GPU\n", __func__, il, layer.gpu_offload_ratio * 100.0f);
 
-            // --- 为张量创建元数据 ---
+            // --- 在目标上下文中创建张量元数据 ---
             layer.ffn_gpu_neu_idx = create_static_tensor_in_ctx(target_ctx, il, "ffn_gpu_neu_idx");
             layer.ffn_gpu_group_idx = create_static_tensor_in_ctx(target_ctx, il, "ffn_gpu_group_idx");
-
             layer.ffn_gpu_neu_mask = create_static_tensor_in_ctx(ctx_cpu_tensors, il, "ffn_gpu_neu_mask");
             layer.ffn_gpu_group_mask = create_static_tensor_in_ctx(ctx_cpu_tensors, il, "ffn_gpu_group_mask");
             layer.ffn_neuron_to_group_map = create_static_tensor_in_ctx(ctx_cpu_tensors, il, "ffn_neuron_to_group_map");
@@ -2038,53 +2125,49 @@ struct sparkinfer_split_loader {
         if (gpu_backend && ggml_get_first_tensor(ctx_gpu_tensors)) {
             ggml_backend_buffer_t gpu_buffer = ggml_backend_alloc_ctx_tensors(ctx_gpu_tensors, gpu_backend);
             if (!gpu_buffer) {
-                ggml_backend_free(cpu_backend);
+                ggml_backend_free(cpu_backend); // cpu_backend 依然需要释放
                 throw std::runtime_error("为GPU张量分配缓冲区失败");
             }
             allocated_buffers.push_back(gpu_buffer);
         }
 
-        // 4. 从文件直接加载初始数据到已分配的张量中
-        FILE* file = fopen(fname.c_str(), "rb");
-        if (!file) throw std::runtime_error("无法以二进制读取模式打开文件: " + fname);
-
-        std::vector<uint8_t> read_buf; 
+        // 4. 修改点: 使用 ggml_backend_tensor_set 从已加载数据的源张量设置目标张量
         for (int i = 0; i < gguf_get_n_tensors(ctx_gguf); ++i) {
             const char* name = gguf_get_tensor_name(ctx_gguf, i);
-            struct ggml_tensor* t = ggml_get_tensor(ctx_cpu_tensors, name);
-            if (!t) {
-                t = ggml_get_tensor(ctx_gpu_tensors, name);
+            
+            // 源张量 (数据已由 gguf_init 加载到其 ->data 指针中)
+            struct ggml_tensor* src_tensor = ggml_get_tensor(ctx_meta, name);
+            if (!src_tensor) {
+                 throw std::runtime_error("在源 GGUF 上下文中未找到张量: " + std::string(name));
+            }
+            if (!src_tensor->data) {
+                throw std::runtime_error("源张量数据未加载(data is null): " + std::string(name));
             }
 
-            if (t) {
-                const size_t offset = gguf_get_tensor_offset(ctx_gguf, i);
-                struct ggml_tensor* t_meta_from_file = ggml_get_tensor(ctx_meta, name);
-                const size_t nbytes_from_file = ggml_nbytes(t_meta_from_file);
+            // 查找目标张量 (已由后端分配好缓冲区)
+            struct ggml_tensor* dst_tensor = ggml_get_tensor(ctx_cpu_tensors, name);
+            if (!dst_tensor) {
+                dst_tensor = ggml_get_tensor(ctx_gpu_tensors, name);
+            }
 
-                if (fseek(file, offset, SEEK_SET) != 0) {
-                    fclose(file);
-                    throw std::runtime_error("在文件中定位张量数据失败: " + std::string(name));
-                }
-                
-                read_buf.resize(nbytes_from_file);
-                if (fread(read_buf.data(), 1, nbytes_from_file, file) != nbytes_from_file) {
-                    fclose(file);
-                    throw std::runtime_error("从文件读取张量数据失败: " + std::string(name));
-                }
-                // 将初始数据设置到预分配缓冲区的开头
-                ggml_backend_tensor_set(t, read_buf.data(), 0, nbytes_from_file);
-            }else{
-                throw std::runtime_error("未找到张量: " + std::string(name));
+            if (dst_tensor) {
+                // 使用 ggml_backend_tensor_set 将数据从 host (src_tensor->data) 复制到 device (dst_tensor)
+                // 这会自动处理 CPU->CPU 或 CPU->GPU 的情况
+                const size_t nbytes = ggml_nbytes(src_tensor);
+                ggml_backend_tensor_set(dst_tensor, src_tensor->data, 0, nbytes);
+            } else {
+                throw std::runtime_error("在目标上下文中未找到张量: " + std::string(name));
             }
         }
-        fclose(file);
 
         const int64_t t_end_us = ggml_time_us();
-        LLAMA_LOG_INFO("%s: 分割load完毕，耗时 %.2f 毫秒\n", __func__, (t_end_us - t_start_us) / 1000.0);
+        LLAMA_LOG_INFO("%s: 分割数据复制完毕，耗时 %.2f 毫秒\n", __func__, (t_end_us - t_start_us) / 1000.0);
+        
 
-        // save data to llama_model
-        model.ctx_cpu_idx_tensors = ctx_cpu_tensors; // for CPU idx tensors
-        model.ctx_gpu_idx_tensors = ctx_gpu_tensors; // for GPU idx tensors
+        // 5. 保存数据到 llama_model (逻辑不变)
+        model.ctx_cpu_idx_tensors = ctx_cpu_tensors;
+        model.ctx_gpu_idx_tensors = ctx_gpu_tensors;
+
         model.layer_neuron_count = layer_neuron_count;
         model.layer_group_count = layer_group_count;
         model.layer_group_size = layer_group_size;
