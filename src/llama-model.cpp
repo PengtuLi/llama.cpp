@@ -1655,21 +1655,21 @@ struct sparkInfer_layer_cache {
         ffn_neuron_to_group_map = layer.ffn_neuron_to_group_map;
 
         /* debug info */ 
-        FILE* log_file = fopen("debug_split_info.log", "a");
-        if (log_file == NULL) {
-            // 如果文件打开失败，可以打印一个错误到 stderr 然后继续，或者直接退出
-            perror("Failed to open log file");
-            // return; // 或者根据你的错误处理逻辑决定是否返回
-        }
-        std::time_t result = std::time(nullptr);
-        fprintf(log_file, "\n--- Debugging Layer %d split info into file, timestamp %s ---", layer_idx, std::ctime(&result)); // 添加一些上下文信息
-        debug_print_tensor_i64_to_file(log_file, ffn_gpu_neu_idx);
-        debug_print_tensor_i64_to_file(log_file, ffn_gpu_neu_mask);
-        debug_print_tensor_i64_to_file(log_file, ffn_gpu_group_idx);
-        debug_print_tensor_i64_to_file(log_file, ffn_gpu_group_mask);
-        debug_print_tensor_i64_to_file(log_file, ffn_neuron_to_group_map);
-        fflush(log_file);
-        fclose(log_file);
+        // FILE* log_file = fopen("debug_split_info.log", "a");
+        // if (log_file == NULL) {
+        //     // 如果文件打开失败，可以打印一个错误到 stderr 然后继续，或者直接退出
+        //     perror("Failed to open log file");
+        //     // return; // 或者根据你的错误处理逻辑决定是否返回
+        // }
+        // std::time_t result = std::time(nullptr);
+        // fprintf(log_file, "\n--- Debugging Layer %d split info into file, timestamp %s ---", layer_idx, std::ctime(&result)); // 添加一些上下文信息
+        // debug_print_tensor_i64_to_file(log_file, ffn_gpu_neu_idx);
+        // debug_print_tensor_i64_to_file(log_file, ffn_gpu_neu_mask);
+        // debug_print_tensor_i64_to_file(log_file, ffn_gpu_group_idx);
+        // debug_print_tensor_i64_to_file(log_file, ffn_gpu_group_mask);
+        // debug_print_tensor_i64_to_file(log_file, ffn_neuron_to_group_map);
+        // fflush(log_file);
+        // fclose(log_file);
         /* debug info end */ 
 
         GGML_ASSERT(neuron_cache_capacity <= layer_neuron_count && "we required neuron_cache_capacity <= layer_neuron_count");
