@@ -36,7 +36,7 @@ class NeuronPartition:
         print("partitioned layer buffer size:", result)
         self.layer_buffer_neuron_size = result
 
-    def append_gpu_idx(self, gguf_writer: GGUFWriter, layer_idx: int) -> None:
+    def append_gpu_idx(self, gguf_writer: GGUFWriter, layer_idx: int, log_file=None) -> None:
         """
         根据分组权重选择神经元放入GPU，并将所有相关信息写入GGUF文件。
         """
@@ -102,7 +102,7 @@ class NeuronPartition:
         )
 
         # b) ffn_gpu_neu_idx (索引列表)
-        ffn_gpu_neu_idx = np.sort(np.array(list(gpu_neurons_set), dtype=np.int64))
+        ffn_gpu_neu_idx = np.array(list(gpu_neurons_set), dtype=np.int64)
         key_gpu_neuron_idx = f"blk.{layer_idx}.ffn_gpu_neu_idx"
         gguf_writer.add_tensor(
             name=key_gpu_neuron_idx,
@@ -157,6 +157,46 @@ class NeuronPartition:
             raw_shape=ffn_neuron_to_group_map.shape[::-1],
             raw_dtype=GGMLQuantizationType.I64,
         )
+        
+        # log
+        if log_file:
+            log_numpy_array(log_file, key_gpu_neuron_idx, ffn_gpu_neu_idx)
+            log_numpy_array(log_file, key_gpu_neu_mask, ffn_gpu_neu_mask)
+            log_numpy_array(log_file, key_ffn_gpu_group_idx, ffn_gpu_group_idx)
+            log_numpy_array(log_file, key_ffn_gpu_group_mask, ffn_gpu_group_mask)
+            log_numpy_array(log_file, key_ffn_neuron_to_group_map, ffn_neuron_to_group_map)
+
+def log_numpy_array(log_file, name: str, arr: np.ndarray):
+    """
+    将 NumPy 数组的详细信息【完整地】记录到给定的文件对象中。
+
+    Args:
+        log_file: 一个已打开并可写入的文件对象。
+        name (str): 要记录的张量的名称。
+        arr (np.ndarray): NumPy 数组。
+    """
+    if not log_file:
+        return
+
+    log_file.write(f"--- Logging Tensor: {name} ---\n")
+    log_file.write(f"  Shape: {arr.shape}, DType: {arr.dtype}, Size: {arr.size} elements\n")
+
+    if arr.size == 0:
+        log_file.write("  Data: [] (Empty Array)\n\n")
+        return
+
+    old_options = np.get_printoptions()
+
+    try:
+        # 2. 设置新的打印选项，强制打印所有元素
+        np.set_printoptions(threshold=sys.maxsize)
+        
+        log_file.write("  Data:\n")
+        # 3. 将数组的字符串形式写入文件
+        log_file.write(f"{arr}\n\n")
+
+    finally:
+        np.set_printoptions(**old_options)  
 
 
 def export_split(
@@ -165,19 +205,31 @@ def export_split(
     neuron: int,
     vram_capacity: int,
     neuron_capacity: int,
+    log_path: str = "debug_split_info_python.log"
 ):
     sparkinfer_np = NeuronPartition(neuron_partition, neuron)
     sparkinfer_np.cal_layer_buffer_size(neuron_capacity)
 
     gguf_out = GGUFWriter(output_path, "sparkinfer.gpu_index")
-    for i, partition in neuron_partition.items():
-        sparkinfer_np.append_gpu_idx(gguf_out, i)
+    
+    print(f"Writing debug information to log file: {log_path}")
+    with open(log_path, "w", encoding="utf-8") as log_file:
+        # 写入一些全局信息到日志文件头部
+        log_file.write(f"--- GGUF Split Export Log for: {output_path} ---\n")
+        log_file.write(f"Total layers to process: {len(neuron_partition)}\n")
+        log_file.write(f"Total neurons per FFN layer: {neuron}\n")
+        log_file.write(f"Target neuron capacity on GPU: {neuron_capacity}\n\n")
+        
+        for i, partition in neuron_partition.items():
+            log_file.write(f"================== Processing Layer {i} ==================\n")
+            sparkinfer_np.append_gpu_idx(gguf_out, i, log_file=log_file)
+            log_file.write(f"================== Finished Layer {i} ==================\n\n")
 
     # set kvs
     gguf_out.add_block_count(len(neuron_partition))
     gguf_out.add_uint64(gguf.Keys.Split.VRAM_CAPACITY, vram_capacity)
     gguf_out.add_uint64(gguf.Keys.Split.LAYER_NEURON_COUNT, neuron)
-    gguf_out.add_uint64(gguf.Keys.Split.LAYER_GROUP_COUNT, sparkinfer_np.group_count)
+    gguf_out.add_uint64(gguf.Keys.Split.LAYER_GROUP_COUNT, sparkinfer_np.group_count) # number of group
 
     gguf_out.write_header_to_file()
     gguf_out.write_kv_data_to_file()
