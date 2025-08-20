@@ -219,7 +219,7 @@ struct llama_layer {
 
     // ffn slice on gpu
     struct ggml_tensor * ffn_gpu_gate       = nullptr;
-    struct ggml_tensor * ffn_gpu_down_t     = nullptr; // has been transformed,powerinfer里这个就是转置的，我标明一下
+    struct ggml_tensor * ffn_gpu_down_t     = nullptr;
     struct ggml_tensor * ffn_gpu_up         = nullptr;
 
     // ffn sparse infernece relevant 

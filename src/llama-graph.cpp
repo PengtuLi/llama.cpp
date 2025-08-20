@@ -600,6 +600,8 @@ ggml_tensor * llm_graph_context::build_ffn(
                     cur = build_lora_mm(gate, cur);
                     cb(cur, "ffn_gate", il);
                 } break;
+            default:
+                GGML_ASSERT(false && "unsupported gate type");
         }
 
         if (gate_b) {
@@ -843,6 +845,17 @@ ggml_tensor * llm_graph_context::build_sparse_ffn(
         }else{
             sparse_idx = sparse_idx_cross_layer;
         }
+        
+        if (il != n_layer - 1) {
+            ggml_tensor * next_sparse_idx = build_predictor(input, pred_up, pred_up_b, pred_down, pred_down_b, il+1);
+
+            // sparse_idx_cross_layer = next_sparse_idx;
+            sparse_idx_cross_layer = ggml_dup(ctx0, next_sparse_idx); // why we do this??
+            cb(sparse_idx_cross_layer, "pred_out_dup", il+1);
+
+            // GTODO: build reload
+            // build_reload();
+        }
 
         // sparse_ffn  GTODO: use integrated kernel?
         ggml_tensor * cur = nullptr;
@@ -883,15 +896,6 @@ ggml_tensor * llm_graph_context::build_sparse_ffn(
                 cur = ggml_add(ctx0, cur, down_b);
                 cb(cur, "ffn_down_b", il);
             }
-        }
-        
-        if (il != n_layer - 1) {
-            // 用通用的 pred_up/pred_down 计算
-            ggml_tensor * next_sparse_idx = build_predictor(input, pred_up, pred_up_b, pred_down, pred_down_b, il+1);
-
-            // sparse_idx_cross_layer = next_sparse_idx;
-            sparse_idx_cross_layer = ggml_dup(ctx0, next_sparse_idx); // why we do this??
-            cb(sparse_idx_cross_layer, "pred_out_dup", il+1);
         }
         
         return cur;

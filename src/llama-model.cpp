@@ -6121,7 +6121,7 @@ struct llm_build_llama : public llm_graph_context {
             // feed-forward network (non-MoE)
             if (model.layers[il].ffn_gate_inp == nullptr) {
                 // gate type
-                llm_ffn_gate_type ffn_gate_type = model.arch == LLM_ARCH_PRO_SPARSE_LLAMA ? LLM_FFN_PAR:LLM_FFN_SYM;
+                llm_ffn_gate_type ffn_gate_type = LLM_FFN_PAR;
 
                 cur = build_norm(ffn_inp,
                         model.layers[il].ffn_norm, NULL,

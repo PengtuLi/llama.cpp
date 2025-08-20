@@ -62,6 +62,7 @@
 #include <stdlib.h>
 #include <string>
 #include <vector>
+// #include <nvtx3/nvToolsExt.h>
 
 static_assert(sizeof(half) == sizeof(ggml_fp16_t), "wrong fp16 size");
 
@@ -2716,6 +2717,29 @@ static void update_cuda_graph_executable(ggml_backend_cuda_context * cuda_ctx) {
 }
 #endif
 
+// nvtxRangeId_t nvtx_init(char * name){
+//     char full_name[64];
+//     snprintf(full_name, sizeof(full_name), "%s_%s", name, "CUDA");
+
+//     nvtxEventAttributes_t eventAttrib = {0};
+//     eventAttrib.version = NVTX_VERSION;
+//     eventAttrib.size = NVTX_EVENT_ATTRIB_STRUCT_SIZE;
+
+//     // Set a color for better visibility
+//     eventAttrib.colorType = NVTX_COLOR_ARGB;
+//     eventAttrib.color = 0xff00ffa0; // random color for CUDA
+
+//     // Add tensor information as message
+//     char message[256];
+//     snprintf(message, sizeof(message), "[t%d] %s ", 1, full_name);
+//     message[sizeof(message)-1] = '\0';
+//     eventAttrib.messageType = NVTX_MESSAGE_TYPE_ASCII;
+//     eventAttrib.message.ascii = message;
+
+//     nvtxRangeId_t id = nvtxRangeStartEx(&eventAttrib);
+//     return id;
+// }
+
 static void evaluate_and_capture_cuda_graph(ggml_backend_cuda_context * cuda_ctx, ggml_cgraph * cgraph,
     bool & graph_evaluated_or_captured, bool & use_cuda_graph, bool & cuda_graph_update_required) {
 
@@ -2741,7 +2765,11 @@ static void evaluate_and_capture_cuda_graph(ggml_backend_cuda_context * cuda_ctx
                 }
 #endif
 
+                // added nvtx
+                // nvtxRangeId_t id = nvtx_init(node->name);
                 bool ok = ggml_cuda_compute_forward(*cuda_ctx, node);
+                // nvtxRangeEnd(id);
+
                 if (!ok) {
                     GGML_LOG_ERROR("%s: op not supported %s (%s)\n", __func__, node->name, ggml_op_name(node->op));
                 }

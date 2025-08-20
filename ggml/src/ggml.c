@@ -2848,8 +2848,6 @@ struct ggml_tensor * ggml_axpy(
     result->op   = GGML_OP_MUL_MAT; // GTODO: currently we havnt build dense axpy kernels, so we fallback to dense mulmat
     result->src[0] = a;
     result->src[1] = b;
-    result->src[2] = sparse_idx;
-    result->src[3] = gpu_neu_idx;
 
     return result;
 }
