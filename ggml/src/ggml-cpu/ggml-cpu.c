@@ -2292,6 +2292,25 @@ static void ggml_axpy_avx_f16(const int n, const ggml_fp16_t * restrict vx, void
 #endif
 }
 
+static void ggml_axpy_avx_f16_alphaf32(const int n, const ggml_fp16_t * restrict vx, void* vz, float alpha) {
+#if defined(__AVX2__) 
+    float *result = (float *)vz;
+    __m256 scale = _mm256_set1_ps(alpha);
+    for (int i = 0; i < n; i += 8) {
+        __m128i vx_low = _mm_loadu_si128((__m128i const*)(&vx[i]));  
+        __m256 vx_f32 = _mm256_cvtph_ps(vx_low);
+        __m256 vy_f32 = _mm256_loadu_ps((float const*)(result+ i));
+        __m256 res = _mm256_fmadd_ps(vx_f32, scale, vy_f32);
+        _mm256_storeu_ps((float*)(&result[i]), res);
+    }
+#else
+    float *res = (float *)vz;
+    for (int i = 0; i < n; i++) {
+        res[i] = res[i] + (GGML_FP16_TO_FP32(vx[i])*alpha);
+    }
+#endif
+}
+
 static void ggml_compute_forward_axpy_sparse_one_chunk(
         const struct ggml_compute_params * params,
               struct ggml_tensor * dst,
@@ -2509,13 +2528,6 @@ static void ggml_compute_forward_axpy_sparse_new(
         }
     }
 
-    //prepare dynamic chunking (static here: slice src0 rows evenly)
-    if (ith == 0) {
-        atomic_store_explicit(&params->threadpool->current_chunk,
-                              nth, memory_order_relaxed);
-    }
-    ggml_barrier(params->threadpool);
-
     char        * src0_char  = (char *) src0->data;
     void        * input      = (src1->type == vec_dot_type) ? src1->data : params->wdata;
     float       * sparse_idx = (float *)idx->data;
@@ -2532,48 +2544,55 @@ static void ggml_compute_forward_axpy_sparse_new(
     // nvtxRangeId_t id_computing = nvtx_init(params, "computing", " ");
 
 #if defined(_MSC_VER)
-    float* vec = (float *)_malloca(ne00 * 4 * sizeof(float));
+    float* vec = (float *)_malloca(ne00 * 4 * sizeof(float));  // why 4?
 #else
     float vec[ne00*4];
 #endif
 
-    void *vy = vec;
+    void * thread_tmp_rs = vec;
     ggml_fp16_t * input_row = NULL;
+    float  * sparse_idx_row = NULL;
+
     for (int token = 0; token < n_tokens; token++) {
         input_row = (ggml_fp16_t *)((char *)input + token * token_len_char);
-        sparse_idx = (float *)((char *)sparse_idx + token * idx->nb[1]);
-        memset(vy, 0, ne00*4);
+        sparse_idx_row = (float *)((char *)sparse_idx + token * idx->nb[1]);
+        memset(thread_tmp_rs, 0, ne00*4);
 
         for (int64_t neu_i = start_neu; neu_i < end_neu; neu_i++) {
             ggml_fp16_t alpha_fp16 = input_row[neu_i];
-		    if (neu_i >= ne01 || fabsf(GGML_FP16_TO_FP32(alpha_fp16)) < 1e-7f || cpu_mask[neu_i] == 1 || sparse_idx[neu_i] < 0.5f){ // GTODO: is it slow to perform GGML_FP16_TO_FP32??
+            float alpha_fp32 = GGML_FP16_TO_FP32(alpha_fp16);
+		    if (neu_i >= ne01 || fabsf(alpha_fp32) < 1e-7f || cpu_mask[neu_i] == 1 || sparse_idx_row[neu_i] < 0.5f){ // GTODO: is it slow to perform GGML_FP16_TO_FP32??
                 continue;
             }
-           ggml_axpy_avx_f16(ne00, (ggml_fp16_t *)(src0_char + nb01 * neu_i), (ggml_fp16_t *)vy, alpha_fp16);
+            ggml_fp16_t * src0_row = (ggml_fp16_t *)(src0_char + neu_len_char * neu_i);
+            ggml_axpy_avx_f16_alphaf32(ne00, src0_row, thread_tmp_rs, alpha_fp32);
         }
         
         float *res = (float *)((char *)(dst->data) + token * nb1);
-        float *tmp = (float *)vy;
+        float *tmp = (float *)thread_tmp_rs;
         
         // write back
         int i;
         int remainder = ne00 % 8; // rest elements
 
-#if defined(__AVX2__)
+#if defined(__AVX2__)  // we need to do it atomically
         for (i = 0; i < ne00 - remainder; i += 8) {
-            __m256 res_vec = _mm256_loadu_ps(res + i);  // 加载res中的8个浮点数
-            __m256 tmp_vec = _mm256_loadu_ps(tmp + i);  // 加载tmp中的8个浮点数
-            __m256 result = _mm256_add_ps(res_vec, tmp_vec);  // 执行加法运算
-            _mm256_storeu_ps(res + i, result);  // 存储结果到res中
+            __m256 tmp_vec = _mm256_loadu_ps(tmp + i);  // Load tmp values in batch
+            for (int j = 0; j < 8; ++j) {
+#pragma omp atomic
+                res[i + j] += ((float*)&tmp_vec)[j];  // Perform atomic addition for each element
+            }
         }
 
         for (i = ne00 - remainder; i < ne00; i++) {
+#pragma omp atomic
             res[i] += tmp[i];
         }
 #else
-        for (i = 0; i < ne00; i++) {
-            res[i] += tmp[i];
-        }
+    for (int i = 0; i < ne00; i++) {
+#pragma omp atomic
+        res[i] += tmp[i];
+    }
 #endif
     }
 #if defined(_MSC_VER)
