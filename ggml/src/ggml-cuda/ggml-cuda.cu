@@ -2329,7 +2329,7 @@ static bool ggml_cuda_compute_forward(ggml_backend_cuda_context & ctx, struct gg
             //     printf("[DEBUG_CUDA] mal_mat: tensor->name=%s, time=%lld\n", dst->name, t_e-t_s);
             // }
             break;
-        case GGML_OP_AXPY:
+        case GGML_OP_AXPY_SPARSE:
         //    {
         //         int t_s1 = ggml_time_ms();
                 ggml_cuda_axpy_sparse(ctx, dst->src[0], dst->src[1], dst);
@@ -3098,7 +3098,7 @@ static bool ggml_backend_cuda_device_supports_op(ggml_backend_dev_t dev, const g
         case GGML_OP_MUL_MAT:
         case GGML_OP_MUL_MAT_ID:
         case GGML_OP_MUL_MAT_SPARSE:
-        case GGML_OP_AXPY:
+        case GGML_OP_AXPY_SPARSE:
             {
                 struct ggml_tensor * a = op->src[0];
                 struct ggml_tensor * b = op->src[1];
@@ -3380,7 +3380,7 @@ static int64_t get_op_batch_size(const ggml_tensor * op) {
             return 0;
         case GGML_OP_MUL_MAT:
         case GGML_OP_MUL_MAT_SPARSE:
-        case GGML_OP_AXPY:
+        case GGML_OP_AXPY_SPARSE:
             return op->ne[1];
         case GGML_OP_MUL_MAT_ID:
         case GGML_OP_ROPE:

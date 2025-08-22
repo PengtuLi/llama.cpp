@@ -463,11 +463,10 @@ extern "C" {
 
         // sparkinfer
         GGML_OP_MUL_MAT,
-        GGML_OP_MUL_MAT_SPARSE,
-        GGML_OP_AXPY,
-        
-
         GGML_OP_MUL_MAT_ID,
+        GGML_OP_MUL_MAT_SPARSE,
+        GGML_OP_AXPY_SPARSE,
+
         GGML_OP_OUT_PROD,
 
         GGML_OP_SCALE,

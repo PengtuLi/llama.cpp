@@ -2732,7 +2732,7 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
                 // int t_end =ggml_time_us();
                 // printf("[TIMING]  mal_mat: time=%lld\n", t_end-t_start);
             } break;
-        case GGML_OP_AXPY:
+        case GGML_OP_AXPY_SPARSE:
             {
                 // int t_start = ggml_time_us();
                 ggml_compute_forward_axpy_sparse_new(params, tensor);
@@ -3136,7 +3136,7 @@ static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
                 n_tasks = n_threads;
             } break;
         case GGML_OP_MUL_MAT_SPARSE:
-        case GGML_OP_AXPY:
+        case GGML_OP_AXPY_SPARSE:
             {
                 n_tasks = n_threads;
 
@@ -3636,7 +3636,7 @@ struct ggml_cplan ggml_graph_plan(
                         // GTODO: if we are not using premask version, this is unneccessary
                         cur += ggml_nelements(node->src[2]) * sizeof(int64_t);
                     } break;
-                case GGML_OP_AXPY:
+                case GGML_OP_AXPY_SPARSE:
                     {
                         const enum ggml_type vec_dot_type = type_traits_cpu[node->src[0]->type].vec_dot_type;
 

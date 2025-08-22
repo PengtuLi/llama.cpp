@@ -923,6 +923,9 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
 
     "MUL_MAT",
     "MUL_MAT_ID",
+    "MUL_MAT_SPARSE",
+    "AXPY_SPARSE",
+    
     "OUT_PROD",
 
     "SCALE",
@@ -2823,7 +2826,7 @@ struct ggml_tensor * ggml_axpy_sparse(
     const int64_t ne[4] = { a->ne[0], b->ne[1], b->ne[2], b->ne[3] };
     struct ggml_tensor * result = ggml_new_tensor(ctx, GGML_TYPE_F32, GGML_MAX_DIMS, ne);
 
-    result->op   = GGML_OP_AXPY;
+    result->op   = GGML_OP_AXPY_SPARSE;
     result->src[0] = a;
     result->src[1] = b;
     result->src[2] = sparse_idx;
@@ -5545,7 +5548,7 @@ static void ggml_compute_backward(
         } break;
         case GGML_OP_MUL_MAT: 
         case GGML_OP_MUL_MAT_SPARSE:
-        case GGML_OP_AXPY:{
+        case GGML_OP_AXPY_SPARSE:{
             // https://cs231n.github.io/optimization-2/#staged
             // # forward pass
             // s0 = np.random.randn(5, 10)
