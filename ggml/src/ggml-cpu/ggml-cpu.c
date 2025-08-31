@@ -2502,7 +2502,7 @@ static void ggml_compute_forward_axpy_sparse_new(
     }
     GGML_ASSERT(params->wsize >= (size_t)((char *)wdata_cur - (char *)params->wdata));
 
-    // convert to same type, align precision
+    // convert to same type, align precision, src1 fp32->fp16
     if (src1->type != vec_dot_type) {
         char * wdata = params->wdata;
 
@@ -2535,7 +2535,7 @@ static void ggml_compute_forward_axpy_sparse_new(
 
     const int64_t        n_tokens = ne1;
     const int64_t    neu_len_char = nb01;
-    const int64_t  token_len_char = nb11;
+    const int64_t  token_len_char = ggml_type_size(vec_dot_type) * ne10;
 
     const int64_t neu_per_thread = (ne01 + nth - 1)/(nth);
     const int64_t start_neu = neu_per_thread*ith;  // start neu of the thread
@@ -2544,9 +2544,9 @@ static void ggml_compute_forward_axpy_sparse_new(
     // nvtxRangeId_t id_computing = nvtx_init(params, "computing", " ");
 
 #if defined(_MSC_VER)
-    float* vec = (float *)_malloca(ne00 * 4 * sizeof(float));  // why 4?
+    float* vec = (float *)_malloca(ne00 * sizeof(float));
 #else
-    float vec[ne00*4];
+    float vec[ne00];
 #endif
 
     void * thread_tmp_rs = vec;
@@ -2556,14 +2556,17 @@ static void ggml_compute_forward_axpy_sparse_new(
     for (int token = 0; token < n_tokens; token++) {
         input_row = (ggml_fp16_t *)((char *)input + token * token_len_char);
         sparse_idx_row = (float *)((char *)sparse_idx + token * idx->nb[1]);
-        memset(thread_tmp_rs, 0, ne00*4);
+        memset(thread_tmp_rs, 0, ne00*sizeof(float));
 
         for (int64_t neu_i = start_neu; neu_i < end_neu; neu_i++) {
-            ggml_fp16_t alpha_fp16 = input_row[neu_i];
-            float alpha_fp32 = GGML_FP16_TO_FP32(alpha_fp16);
-		    if (neu_i >= ne01 || fabsf(alpha_fp32) < 1e-7f || cpu_mask[neu_i] == 1 || sparse_idx_row[neu_i] < 0.5f){ // GTODO: is it slow to perform GGML_FP16_TO_FP32??
+            if (neu_i >= ne01 || cpu_mask[neu_i] == 1 || sparse_idx_row[neu_i] < 0.5f){ 
                 continue;
             }
+            ggml_fp16_t alpha_fp16 = input_row[neu_i];
+            float alpha_fp32 = GGML_FP16_TO_FP32(alpha_fp16);
+
+            if (fabsf(alpha_fp32) < 1e-7f) continue;
+
             ggml_fp16_t * src0_row = (ggml_fp16_t *)(src0_char + neu_len_char * neu_i);
             ggml_axpy_avx_f16_alphaf32(ne00, src0_row, thread_tmp_rs, alpha_fp32);
         }
@@ -2737,7 +2740,7 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
                 // int t_start = ggml_time_us();
                 ggml_compute_forward_axpy_sparse_new(params, tensor);
                 // int t_end =ggml_time_us();
-                // printf("[DEBUG_CPU]     axpy: tensor->name=%s, time= %lld us\n", tensor->name, t_end-t_start);
+                // printf("[DEBUG_CPU]     axpy: tensor->name=%s, time= %lld us\n", tensor->name, t_end-t_start); 
             }break;
         case GGML_OP_MUL_MAT_ID:
             {

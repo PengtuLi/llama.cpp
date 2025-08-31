@@ -22,10 +22,9 @@ static __global__ void mul_mat_axpy_sparse(
     const int neu = gpu_neu_idx ? gpu_neu_idx[blk_idx] : blk_idx;
     const int tid = threadIdx.x; // range from [0,31]
 
-    float alpha = y[neu];
+    float alpha_fp32 = y[neu];
 
-    if (fabsf(alpha) < 1e-6f || sparse_idx[neu] < 0.5f) {
-        // if (tid == 0) dst[gpu_neu] = 0.0f;
+    if (fabsf(alpha_fp32) < 1e-6f || sparse_idx[neu] < 0.5f) {
         return;
     }
 
@@ -47,13 +46,13 @@ static __global__ void mul_mat_axpy_sparse(
 
         dfloat2 v;
         const half * x = (const half *) vx;
-        v.x = x[vx_i + 0];
-        v.y = x[vx_i + 1];
+        v.x = __half2float(x[vx_i + 0]);
+        v.y = __half2float(x[vx_i + 1]);
 
         // matrix multiplication, process 2 vals per j iter
-        tmp = v.x * alpha;
+        tmp = v.x * alpha_fp32;
         shared_dst[col] = tmp;  // share_dst[col] = tmp
-        tmp = v.y * alpha;
+        tmp = v.y * alpha_fp32;
         shared_dst[col+1] = tmp; // share_dst[col+1] = tmp       
     }
     __syncthreads();
@@ -86,9 +85,9 @@ static __global__ void mul_mat_axpy_sparse_batch(
     const int neu = gpu_neu_idx ? gpu_neu_idx[blk_idx] : blk_idx;
     const int tid = threadIdx.x; // range from [0,31]
 
-    float alpha = y[neu];
+    float alpha_fp32 = y[neu];
 
-    if (fabsf(alpha) < 1e-6f || sparse_idx[neu] < 0.5f) {
+    if (fabsf(alpha_fp32) < 1e-6f || sparse_idx[neu] < 0.5f) {
         // if (tid == 0) dst[gpu_neu] = 0.0f;
         return;
     }
@@ -111,13 +110,13 @@ static __global__ void mul_mat_axpy_sparse_batch(
 
         dfloat2 v;
         const half * x = (const half *) vx;
-        v.x = x[vx_i + 0];
-        v.y = x[vx_i + 1];
+        v.x = __half2float(x[vx_i + 0]);
+        v.y = __half2float(x[vx_i + 1]);
 
         // matrix multiplication, process 2 vals per j iter
-        tmp = v.x * alpha;
+        tmp = v.x * alpha_fp32;
         shared_dst[col] = tmp;  // share_dst[col] = tmp
-        tmp = v.y * alpha;
+        tmp = v.y * alpha_fp32;
         shared_dst[col+1] = tmp; // share_dst[col+1] = tmp       
     }
     __syncthreads();
@@ -167,7 +166,6 @@ static void mul_mat_axpy_cuda_sparse(
 }
 
 // GTODO: this is very hacky, we need to add more safety check later
-// but more importantly, what's the diffence between tensor->data & tensor-extra->data_device[device]? which to load???
 void * ggml_cuda_get_tensor_data_axpy(const ggml_tensor * tensor) {
     return tensor->data;
     // if (!tensor) {
@@ -177,7 +175,7 @@ void * ggml_cuda_get_tensor_data_axpy(const ggml_tensor * tensor) {
     // }
     // if (!tensor->extra) {
     //     printf("no tensor-extra, %s\n",tensor->name); 
-    //     GGML_ASSERT(false && "tensor->extra is null"); sparse_idx在这里会报错, saprse_idx is only at tensor->data 
+    //     GGML_ASSERT(false && "tensor->extra is null"); // sparse_idx在这里会报错, saprse_idx is only at tensor->data 
     //     return nullptr;
     // }
     // int device = ggml_cuda_get_device();
@@ -225,6 +223,9 @@ void ggml_cuda_op_axpy_sparse(
 
     const int cc = ggml_cuda_info().devices[ggml_cuda_get_device()].cc;
     const enum ggml_prec prec = fast_fp16_available(cc) ? ggml_prec(dst->op_params[0]) : GGML_PREC_F32;
+
+    // set dst_dd_i as zero
+    CUDA_CHECK(cudaMemsetAsync(dst_dd_i, 0, sizeof(float)*dst->ne[0]*dst->ne[1], stream));  
 
     switch (src0->type) {
         case GGML_TYPE_F32: {

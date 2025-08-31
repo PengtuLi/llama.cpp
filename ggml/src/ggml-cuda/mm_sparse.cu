@@ -19,7 +19,6 @@ static __global__ void mul_mat_vec_sparse(
     int neu = gpu_neu_idx ? gpu_neu_idx[row] : row; // (one of the neurons(on gpu) original index)
     
     if(sparse_idx[neu] < 0.5f){ // GTODO: do we need sparse_threshold?
-        if (tid == 0) dst[neu] = 0.0f; // GTODO: this should be done in initialization. ps: outputs are different if we dont set 0 before return, meaning dst was not initialized as 0 at the beginning?
         return;
     }
 
@@ -135,8 +134,6 @@ static __global__ void mul_mat_batch_sparse(
 
     // if(tid == 0) printf("row=%d ready for sparse_idx[%d]=%f\n",row, neu, sparse_idx[neu]);
     if(sparse_idx[neu] < 0.5f){ // GTODO: do we need sparse_threshold?
-        // if(tid == 0) printf("row=%d in sparse_idx[%d]=%f\n",row, neu, sparse_idx[neu]);  
-        if (tid == 0) dst[neu] = 0.0f;
         return;
     }
 
@@ -440,6 +437,9 @@ void ggml_cuda_op_mul_mat_sparse(
 
     const int cc = ggml_cuda_info().devices[ggml_cuda_get_device()].cc;
     const enum ggml_prec prec = fast_fp16_available(cc) ? ggml_prec(dst->op_params[0]) : GGML_PREC_F32;
+
+    // set dst_dd_i as zero
+    CUDA_CHECK(cudaMemsetAsync(dst_dd_i, 0, sizeof(float)*dst->ne[0]*dst->ne[1], stream));  
 
     switch (src0->type) {
         case GGML_TYPE_F32: {
