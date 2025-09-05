@@ -1543,7 +1543,7 @@ static void ggml_compute_forward_mul_mat_sparse_one_chunk(
 
     // attempt to reduce false-sharing (does not seem to make a difference)
     // 16 * 2, accounting for mmla kernels
-    float tmp[32];
+    // float tmp[32];
 
     for (int64_t iir1 = ir1_start; iir1 < ir1_end; iir1 += blck_1) {
         for (int64_t iir0 = ir0_start; iir0 < ir0_end; iir0 += blck_0) {
@@ -1572,21 +1572,24 @@ static void ggml_compute_forward_mul_mat_sparse_one_chunk(
                         : (i11 * nb11 + i12 * nb12 + i13 * nb13));
                 float * dst_col = (float*)((char*)dst->data + (i1 * nb1 + i2 * nb2 + i3 * nb3));
 
-                //for (int64_t ir0 = iir0; ir0 < iir0 + blck_0 && ir0 < ir0_end; ++ir0) {
-                //    vec_dot(ne00, &dst_col[ir0], src0_row + ir0*nb01, src1_col);
-                //}
-
-                for (int64_t ir0 = iir0; ir0 < iir0 + blck_0 && ir0 < ir0_end; ir0 += num_rows_per_vec_dot) {
+                for (int64_t ir0 = iir0; ir0 < iir0 + blck_0 && ir0 < ir0_end; ++ir0) {
                     const int64_t idx_flat = ir0 + ir1 * ne01;
-                    if (!(cpu_mask[idx_flat%ne01] == 0 && sparse_idx[idx_flat] >= 0.5f)) {
-                        continue;
-                    }
-                    vec_dot(ne00, &tmp[ir0 - iir0], (num_rows_per_vec_dot > 1 ? 16 : 0), src0_row + ir0 * nb01, (num_rows_per_vec_dot > 1 ? nb01 : 0), src1_col, (num_rows_per_vec_dot > 1 ? src1_col_stride : 0), num_rows_per_vec_dot);
+                    if (cpu_mask[idx_flat % ne01] == 1) continue; // skip gpu neurons
+                    if (sparse_idx[idx_flat] < 0.5f && dst->ne[1]==1) continue;    // skip not activated neurons, use sparse inference only in case of ne1==1
+                    vec_dot(ne00, &dst_col[ir0], 0, src0_row + ir0*nb01, 0, src1_col, 0, 1);
                 }
 
-                for (int cn = 0; cn < num_rows_per_vec_dot; ++cn) {
-                    memcpy(&dst_col[iir0 + cn * nb1 / nb0], tmp + (cn * 16), (MIN(iir0 + blck_0, ir0_end) - iir0) * sizeof(float));
-                }
+                // memset(tmp, 0, sizeof(float)*32);
+                // for (int64_t ir0 = iir0; ir0 < iir0 + blck_0 && ir0 < ir0_end; ir0 += num_rows_per_vec_dot) {
+                //     const int64_t idx_flat = ir0 + ir1 * ne01;
+                //     if (cpu_mask[idx_flat % ne01] == 1) continue; // skip gpu neurons
+                //     if (sparse_idx[idx_flat] < 0.5f) continue;    // skip not activated neurons
+                //     vec_dot(ne00, &tmp[ir0 - iir0], (num_rows_per_vec_dot > 1 ? 16 : 0), src0_row + ir0 * nb01, (num_rows_per_vec_dot > 1 ? nb01 : 0), src1_col, (num_rows_per_vec_dot > 1 ? src1_col_stride : 0), num_rows_per_vec_dot);
+                // }
+
+                // for (int cn = 0; cn < num_rows_per_vec_dot; ++cn) {
+                //     memcpy(&dst_col[iir0 + cn * nb1 / nb0], tmp + (cn * 16), (MIN(iir0 + blck_0, ir0_end) - iir0) * sizeof(float));
+                // }
             }
         }
     }
@@ -1826,6 +1829,7 @@ static void ggml_compute_forward_mul_mat_sparse_one_chunk_premask(
                 //    vec_dot(ne00, &dst_col[ir0], src0_row + ir0*nb01, src1_col);
                 //}
 
+                memset(tmp, 0, sizeof(float)*32);
                 for (int64_t ir0 = iir0; ir0 < iir0 + blck_0 && ir0 < ir0_end; ir0 += num_rows_per_vec_dot) {
                     const int64_t idx_flat = ir0 + ir1 * ne01;
                     if (need_compute[idx_flat]!=1) {
@@ -2559,9 +2563,10 @@ static void ggml_compute_forward_axpy_sparse_new(
         memset(thread_tmp_rs, 0, ne00*sizeof(float));
 
         for (int64_t neu_i = start_neu; neu_i < end_neu; neu_i++) {
-            if (neu_i >= ne01 || cpu_mask[neu_i] == 1 || sparse_idx_row[neu_i] < 0.5f){ 
-                continue;
-            }
+            if (neu_i >= ne01)  continue;
+            if (cpu_mask[neu_i] == 1 ) continue;
+            if (sparse_idx_row[neu_i] < 0.5f && ne11 == 1) continue; // only use sparse inference in batch=1
+
             ggml_fp16_t alpha_fp16 = input_row[neu_i];
             float alpha_fp32 = GGML_FP16_TO_FP32(alpha_fp16);
 
@@ -2730,8 +2735,8 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
         case GGML_OP_MUL_MAT_SPARSE:
             {
                 // int t_start = ggml_time_us();
-                // ggml_compute_forward_mul_mat_sparse(params, tensor);
-                ggml_compute_forward_mul_mat_sparse_premask(params, tensor);
+                ggml_compute_forward_mul_mat_sparse(params, tensor);
+                // ggml_compute_forward_mul_mat_sparse_premask(params, tensor);
                 // int t_end =ggml_time_us();
                 // printf("[TIMING]  mal_mat: time=%lld\n", t_end-t_start);
             } break;

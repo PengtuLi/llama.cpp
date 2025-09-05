@@ -24,7 +24,7 @@ static __global__ void mul_mat_axpy_sparse(
 
     float alpha_fp32 = y[neu];
 
-    if (fabsf(alpha_fp32) < 1e-6f || sparse_idx[neu] < 0.5f) {
+    if (fabsf(alpha_fp32) < 1e-9f || sparse_idx[neu] < 0.5f) {
         return;
     }
 
@@ -87,10 +87,10 @@ static __global__ void mul_mat_axpy_sparse_batch(
 
     float alpha_fp32 = y[neu];
 
-    if (fabsf(alpha_fp32) < 1e-6f || sparse_idx[neu] < 0.5f) {
-        // if (tid == 0) dst[gpu_neu] = 0.0f;
-        return;
-    }
+    // if (fabsf(alpha_fp32) < 1e-9f || sparse_idx[neu] < 0.5f) {
+    //     // if (tid == 0) dst[gpu_neu] = 0.0f;
+    //     return;
+    // }
 
     extern __shared__ float shared_dst[]; // TODO:dynamic
     
@@ -165,27 +165,6 @@ static void mul_mat_axpy_cuda_sparse(
         (x, y, sparse_idx, gpu_neu_idx, dst, ncols, nrows, src_ncols, num_gpu_neurons, stream);
 }
 
-// GTODO: this is very hacky, we need to add more safety check later
-void * ggml_cuda_get_tensor_data_axpy(const ggml_tensor * tensor) {
-    return tensor->data;
-    // if (!tensor) {
-    //     printf("no tensor, %s\n",tensor->name);
-    //     GGML_ASSERT(false && "tensor is null");
-    //     return nullptr;
-    // }
-    // if (!tensor->extra) {
-    //     printf("no tensor-extra, %s\n",tensor->name); 
-    //     GGML_ASSERT(false && "tensor->extra is null"); // sparse_idx在这里会报错, saprse_idx is only at tensor->data 
-    //     return nullptr;
-    // }
-    // int device = ggml_cuda_get_device();
-    // auto extra = (ggml_tensor_extra_gpu *) tensor->extra;
-
-    // if(tensor->data)
-    // return extra->data_device[device];
-}
-
-
 void ggml_cuda_op_axpy_sparse(
     ggml_backend_cuda_context & ctx,
     const ggml_tensor * src0, 
@@ -211,10 +190,10 @@ void ggml_cuda_op_axpy_sparse(
     const int64_t ncols = src0->ne[0];
     const int64_t nrows = row_high - row_low;
 
-    GGML_ASSERT(ggml_cuda_get_tensor_data_axpy(dst->src[2])!=nullptr  && "missing sparse_idx");
+    GGML_ASSERT(dst->src[2]->data!=nullptr  && "missing sparse_idx");
 
-    float * sparse_idx = static_cast<float *>(ggml_cuda_get_tensor_data_axpy(dst->src[2]));
-    int64_t * gpu_neu_idx = dst->src[3] != NULL ? static_cast<int64_t *>(ggml_cuda_get_tensor_data_axpy(dst->src[3])) : NULL;
+    float * sparse_idx = static_cast<float *>(dst->src[2]->data);
+    int64_t * gpu_neu_idx = dst->src[3] != NULL ? static_cast<int64_t *>(dst->src[3]->data) : NULL;
     
     int64_t num_gpu_neurons = 0;
     if (dst->src[3]){
