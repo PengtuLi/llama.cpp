@@ -452,7 +452,9 @@ llm_graph_context::llm_graph_context(const llm_graph_params & params) :
     memory           (params.memory),
     cross            (params.cross),
     cb_func          (params.cb),
-    res              (std::make_unique<llm_graph_result>()) {
+    res              (std::make_unique<llm_graph_result>())
+    {
+        runtime_buf = std::make_unique<llama_runtime_buffer>(static_cast<int>(n_layer));
     }
 
 int64_t llm_graph_context::n_pos_per_embd() const {
@@ -803,173 +805,115 @@ ggml_tensor * llm_graph_context::build_predictor(
     return sparse_idx;
 }
 
+ggml_tensor * build_reload(
+        ggml_context * ctx,
+        ggml_tensor * sparse_idx,
+        const struct llama_layer *L
+){
+    ggml_tensor * done_reload = nullptr;
 
-// // build sparse ffn graph new 
-// ggml_tensor * llm_graph_context::build_sparse_ffn_new(
-//                llama_model * model,
-//                ggml_tensor * input,
-//                  int   il) const{          
+    ggml_tensor * up     = L->ffn_up;
+    ggml_tensor * gate   = L->ffn_gate;
+    ggml_tensor * down   = L->ffn_down_t;
 
-//         struct llama_layer *L      = &(model->layers[il]);
-//         struct llama_layer *L_next = il == (n_layer - 1) ? nullptr : &(model->layers[il+1]);
-//         bool full_gpu = model->layers[il].gpu_offload_ratio >= 1.0f;
+    ggml_tensor * up_b   = L->ffn_up_b;
+    ggml_tensor * gate_b = L->ffn_gate_b;
 
-//         // build sparse_idx for CURRENT layer
-//         ggml_tensor * sparse_idx = nullptr;
-//         if (il == 0){
-//             sparse_idx = build_predictor(input, L->ffn_pred_up, L->ffn_pred_up_b, L->ffn_pred_down, L->ffn_pred_down_b, il);
-//         }else{
-//             sparse_idx = L->sparse_idx;
-//         }
-        
-//         // build sparse_idx for NEXT layer and RELOAD
-//         if (il != n_layer - 1) {
-//             ggml_tensor * next_sparse_idx = build_predictor(input, L->ffn_pred_up, L->ffn_pred_up_b, L->ffn_pred_down, L->ffn_pred_down_b, il+1);
+    ggml_tensor * gpu_up   = L->ffn_gpu_up;
+    ggml_tensor * gpu_gate = L->ffn_gpu_gate;
+    ggml_tensor * gpu_down = L->ffn_gpu_down_t;
 
-//             L_next->sparse_idx = next_sparse_idx;
+    ggml_tensor * gpu_neu_idx  = L->ffn_gpu_neu_idx;
+    ggml_tensor * gpu_neu_mask = L->ffn_gpu_neu_mask;
 
-//             // // GTODO: build reload
-//             // if(!full_gpu){
-//             //     ggml_tensor * done_reload_up = ggml_reload(ctx0, up, up_b, gpu_up, gpu_up_b, next_sparse_idx, gpu_neu_idx, gpu_neu_mask);
-//             //     cb(done_reload_up, "reload_up", il+1);
+    GGML_ASSERT(gpu_neu_idx && "gpu_neu_idx is required for reloading");
+    GGML_ASSERT(sparse_idx && "sparse_idx is required for reloading");
 
-//             //     if(gate){
-//             //         ggml_tensor * done_reload_gate = ggml_reload(ctx0, gate, gate_b, gpu_gate, gpu_gate_b, next_sparse_idx, gpu_neu_idx, gpu_neu_mask);
-//             //         cb(done_reload_gate, "reload_gate", il+1);
-//             //     }
+    ggml_status status = GGML_STATUS_FAILED;
+    if (gpu_up) {
+        status = ggml_reload_weights(ctx, gpu_up, sparse_idx, gpu_neu_idx);
+        if (status != GGML_STATUS_SUCCESS) {
+            GGML_ABORT("build reload-graph failed");
+        }
+    }
 
-//             //     ggml_tensor * done_reload_down = ggml_reload(ctx0, down, down_b, gpu_down, gpu_down_b, next_sparse_idx, gpu_neu_idx, gpu_neu_mask);
-//             //     cb(done_reload_down, "reload_down", il+1);
-//             // }
-//         }
+    if (gpu_gate) {
+        status = ggml_reload_weights(ctx, gpu_gate, sparse_idx, gpu_neu_idx);
+        if (status != GGML_STATUS_SUCCESS) {
+            GGML_ABORT("build reload-graph failed");
+        }
+    }
 
-//         // sparse_ffn  GTODO: use integrated kernel?
-//         ggml_tensor * cur = nullptr;
+    if (gpu_down) {
+        status = ggml_reload_weights(ctx, gpu_down, sparse_idx, gpu_neu_idx);
+        if (status != GGML_STATUS_SUCCESS) {
+            GGML_ABORT("build reload-graph failed");
+        }
+    }
 
-//         ggml_tensor * up     = L->ffn_up;
-//         ggml_tensor * gate   = L->ffn_gate;
-//         ggml_tensor * down   = L->ffn_down_t;
-//         ggml_tensor * up_b   = L->ffn_up_b;
-//         ggml_tensor * gate_b = L->ffn_gate_b;
-//         ggml_tensor * down_b = L->ffn_down_b;
+    // GTODO[reload]: if we use split FFN,  we need to reload bias also
 
-//         ggml_tensor * gpu_up   = L->ffn_gpu_up;
-//         ggml_tensor * gpu_gate = L->ffn_gpu_gate;
-//         ggml_tensor * gpu_down = L->ffn_gpu_down_t;
+    if(status == GGML_STATUS_SUCCESS){
+        return done_reload;
+    }
+    else{
+        GGML_ABORT("build reload-graph failed");
+    }
+}
 
-//         ggml_tensor * gpu_neu_idx  = L->ffn_gpu_neu_idx;
-//         ggml_tensor * gpu_neu_mask = L->ffn_gpu_neu_mask;
-
-//         llm_ffn_gate_type type_gate = LLM_FFN_PAR;
-
-//         {
-//             ggml_tensor * up_out = build_sparse_mul_mat(input, up, gpu_up, gpu_neu_idx, gpu_neu_mask, sparse_idx, "up", il, full_gpu); 
-//             if(up_b){
-//                 up_out = ggml_add(ctx0, up_out, up_b);
-//                 cb(up_out, "fnn_up_b", il);
-//             }
-
-//             if(gate){
-//                 ggml_tensor * gate_out = build_sparse_mul_mat(input, gate, gpu_gate, gpu_neu_idx, gpu_neu_mask, sparse_idx, "gate", il, full_gpu); 
-                
-//                 if(gate_b){
-//                     gate_out = ggml_add(ctx0, gate_out, gate_b);
-//                     cb(gate_out, "fnn_gate_b", il);
-//                 }
-
-//                 // we only support par gate_op
-//                 if (type_gate == LLM_FFN_PAR){
-//                     gate_out = ggml_relu(ctx0, gate_out);
-//                     cb(gate_out, "ffn_gate_act",il);
-
-//                     gate_out = ggml_mul(ctx0, gate_out, up_out);
-//                     cb(gate_out, "ffn_gate_par",il);
-//                 }else{
-//                     GGML_ASSERT(false && "unsupported gate type");
-//                 }
-                
-//                 cur = gate_out;
-//             }else{
-//                 cur = up_out;
-//             }
-
-//             cur = build_sparse_axpy(cur, down, gpu_down, gpu_neu_idx, gpu_neu_mask, sparse_idx, "down", il, full_gpu); 
-
-//             if (down_b) {
-//                 cur = ggml_add(ctx0, cur, down_b);
-//                 cb(cur, "ffn_down_b", il);
-//             }
-//         }
-        
-//         return cur;
-//     }
-
-
+// build sparse ffn graph new 
 ggml_tensor * llm_graph_context::build_sparse_ffn(
-         ggml_tensor * input,
-         ggml_tensor * pred_up,
-         ggml_tensor * pred_up_b,
-         ggml_tensor * pred_down,
-         ggml_tensor * pred_down_b,
+           const llama_model * model,
+                 ggml_tensor * input,
+                         int   il) const{          
 
-         ggml_tensor * pred_up_0,
-         ggml_tensor * pred_up_b_0,
-         ggml_tensor * pred_down_0,
-         ggml_tensor * pred_down_b_0,
+        const struct llama_layer *L      = &(model->layers[il]);
+        const struct llama_layer *L_next = il == (n_layer - 1) ? nullptr : &(model->layers[il+1]);
+        llama_runtime_layer & R = runtime_buf->layers[il];
+        llama_runtime_layer * R_next = il == (n_layer - 1) ? nullptr : &runtime_buf->layers[il+1];
 
-         ggml_tensor *& sparse_idx_cross_layer,
+        // build sparse_idx for CURRENT layer
+        bool full_gpu      = (L->gpu_offload_ratio >= 1.0f);
+        bool next_full_gpu = (L_next && L_next->gpu_offload_ratio >= 1.0f);
 
-         ggml_tensor * up,
-         ggml_tensor * up_b,
-         ggml_tensor * gate,
-         ggml_tensor * gate_b,
-         ggml_tensor * down,
-         ggml_tensor * down_b,
-
-         ggml_tensor * gpu_up,
-         ggml_tensor * gpu_gate,
-         ggml_tensor * gpu_down,
-         
-         ggml_tensor * gpu_neu_idx,
-         ggml_tensor * gpu_neu_mask,
-               float   gpu_offload_ratio,     
-
-   llm_ffn_gate_type   type_gate,
-                 int   il) const{          
-        // predictor GTODO: add net-layer predictor logit
         ggml_tensor * sparse_idx = nullptr;
-        bool full_gpu = gpu_offload_ratio >= 1.0f;
-
-        // get sparse_idx for this layer
         if (il == 0){
-            sparse_idx = build_predictor(input, pred_up_0, pred_up_b_0, pred_down_0, pred_down_b_0, il);
+            sparse_idx = build_predictor(input, L->ffn_pred_up, L->ffn_pred_up_b, L->ffn_pred_down, L->ffn_pred_down_b, il);
         }else{
-            sparse_idx = sparse_idx_cross_layer;
+            sparse_idx = R.sparse_idx;
         }
         
+        // build sparse_idx for NEXT layer and RELOAD
         if (il != n_layer - 1) {
-            ggml_tensor * next_sparse_idx = build_predictor(input, pred_up, pred_up_b, pred_down, pred_down_b, il+1);
+            ggml_tensor * next_sparse_idx = build_predictor(input, L_next->ffn_pred_up, L_next->ffn_pred_up_b, L_next->ffn_pred_down, L_next->ffn_pred_down_b, il+1);
 
-            sparse_idx_cross_layer = next_sparse_idx;
+            R_next->sparse_idx = next_sparse_idx;
 
-        //     // GTODO: build reload
-        //     if(!full_gpu){
-        //         // naive example:
-        //         ggml_tensor * done_reload_up = ggml_reload(ctx0, up, up_b, gpu_up, gpu_up_b, next_sparse_idx, gpu_neu_idx, gpu_neu_mask);
-        //         cb(done_reload_up, "reload_up", il+1);
-
-        //         if(gate){
-        //             ggml_tensor * done_reload_gate = ggml_reload(ctx0, gate, gate_b, gpu_gate, gpu_gate_b, next_sparse_idx, gpu_neu_idx, gpu_neu_mask);
-        //             cb(done_reload_gate, "reload_gate", il+1);
-        //         }
-
-        //         ggml_tensor * done_reload_down = ggml_reload(ctx0, down, down_b, gpu_down, gpu_down_b, next_sparse_idx, gpu_neu_idx, gpu_neu_mask);
-        //         cb(done_reload_down, "reload_down", il+1);
-        //     }
+            // GTODO[reload]: build reload
+            if(!next_full_gpu){
+                ggml_tensor * done_reload = build_reload(ctx0, next_sparse_idx, L_next); // GTODO[reload] how do we use the done_reload tensor as prerequisite?
+            }
         }
 
         // sparse_ffn  GTODO: use integrated kernel?
         ggml_tensor * cur = nullptr;
+
+        ggml_tensor * up     = L->ffn_up;
+        ggml_tensor * gate   = L->ffn_gate;
+        ggml_tensor * down   = L->ffn_down_t;
+        ggml_tensor * up_b   = L->ffn_up_b;
+        ggml_tensor * gate_b = L->ffn_gate_b;
+        ggml_tensor * down_b = L->ffn_down_b;
+
+        ggml_tensor * gpu_up   = L->ffn_gpu_up;
+        ggml_tensor * gpu_gate = L->ffn_gpu_gate;
+        ggml_tensor * gpu_down = L->ffn_gpu_down_t;
+
+        ggml_tensor * gpu_neu_idx  = L->ffn_gpu_neu_idx;
+        ggml_tensor * gpu_neu_mask = L->ffn_gpu_neu_mask;
+
+        llm_ffn_gate_type type_gate = LLM_FFN_PAR;
+
         {
             ggml_tensor * up_out = build_sparse_mul_mat(input, up, gpu_up, gpu_neu_idx, gpu_neu_mask, sparse_idx, "up", il, full_gpu); 
             if(up_b){
@@ -1011,7 +955,6 @@ ggml_tensor * llm_graph_context::build_sparse_ffn(
         
         return cur;
     }
-
 
 ggml_tensor * llm_graph_context::build_moe_ffn(
          ggml_tensor * cur,

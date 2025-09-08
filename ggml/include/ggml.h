@@ -467,6 +467,9 @@ extern "C" {
         GGML_OP_MUL_MAT_SPARSE,
         GGML_OP_AXPY_SPARSE,
 
+        // sparkinfer reload
+        GGML_OP_RELOAD_WEIGHTS,
+
         GGML_OP_OUT_PROD,
 
         GGML_OP_SCALE,
@@ -1179,9 +1182,12 @@ extern "C" {
         struct ggml_tensor  * sparse_idx,
         struct ggml_tensor  * gpu_bucket);
 
-
-
-
+    GGML_API enum ggml_status ggml_reload_weights(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * weights,
+        struct ggml_tensor  * sparse_idx,
+        struct ggml_tensor  * gpu_neu_idx
+        );
 
     // change the precision of a matrix multiplication
     // set to GGML_PREC_F32 for higher precision (useful for phi-2)

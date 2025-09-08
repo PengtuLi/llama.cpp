@@ -2609,6 +2609,27 @@ static void ggml_compute_forward_axpy_sparse_new(
     // nvtxRangeEnd(id_computing);
 }
 
+//----------------------reload weights op----------------------------
+static void reload_weights(
+        const struct ggml_compute_params * params,
+              struct ggml_tensor * tensor) 
+{
+          struct ggml_tensor * weights     = tensor->src[0];
+    const struct ggml_tensor * sparse_idx  = tensor->src[1];
+          struct ggml_tensor * gpu_neu_idx = tensor->src[2];
+          struct ggml_tensor * DFR_score   = tensor->src[3]; // GTODO[reload]: we dont have DFR_score now
+
+    // GTODO[reload]: check weights is on GPU, while others are on CPU 
+    //        however we do not have such backend-checking API in ggml_tensor now
+    //        bring back backend_type enum in ggml_tensor like the old version??
+    // GGML_ASSERT(weigths->backend == GGML_BACKEND_GPU);
+    // GGML_ASSERT(sparse_idx->backend == GGML_BACKEND_CPU);
+    // GGML_ASSERT(gpu_neu_idx->backend == GGML_BACKEND_GPU);
+    // GGML_ASSERT(DFR_score->backend == GGML_BACKEND_CPU);
+
+    // GTODO[reload]: here is the real implementation of reloading weights, updating DFR_score and gpu_neu_idx
+}
+
 /////////////////////////////////
 
 static void ggml_compute_forward(struct ggml_compute_params * params, struct ggml_tensor * tensor) {
@@ -2747,6 +2768,10 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
                 // int t_end =ggml_time_us();
                 // printf("[DEBUG_CPU]     axpy: tensor->name=%s, time= %lld us\n", tensor->name, t_end-t_start); 
             }break;
+        case GGML_OP_RELOAD_WEIGHTS:
+            {
+                reload_weights(params, tensor);
+            } break;
         case GGML_OP_MUL_MAT_ID:
             {
                 ggml_compute_forward_mul_mat_id(params, tensor);
@@ -3156,6 +3181,10 @@ static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
                 //     GGML_ASSERT(n_threads > 1 && "n_threads must be > 1 to enable hybrid CPU/GPU computation");
                 // }
 #endif
+            } break;
+        case GGML_OP_RELOAD_WEIGHTS:
+            {
+                n_tasks = 1;  // GTODO[reload]:  how many threads do we need for reloaidng?
             } break;
         case GGML_OP_GET_ROWS:
             {
@@ -3651,6 +3680,11 @@ struct ggml_cplan ggml_graph_plan(
                         if (node->src[1]->type != vec_dot_type) {
                             cur = ggml_row_size(vec_dot_type, ggml_nelements(node->src[1]));
                         }
+                    }break;
+                case GGML_OP_RELOAD_WEIGHTS:
+                    {
+                        // GTODO[reload]: how many memory do we need for reloading??
+                        cur = 0;
                     }break;
                 case GGML_OP_MUL_MAT_ID:
                     {

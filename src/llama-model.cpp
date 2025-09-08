@@ -6045,7 +6045,6 @@ struct llm_build_llama : public llm_graph_context {
 
         const float kq_scale = hparams.f_attention_scale == 0.0f ? 1.0f/sqrtf(float(n_embd_head)) : hparams.f_attention_scale;
 
-        ggml_tensor * sparse_idx_cross_layer = nullptr; // next-layer sparse_idx
         for (int il = 0; il < n_layer; ++il) {
             ggml_tensor * inpSA = inpL;
 
@@ -6128,51 +6127,8 @@ struct llm_build_llama : public llm_graph_context {
                         LLM_NORM_RMS, il);
                 cb(cur, "ffn_norm", il);
 
-                if(use_sparkinfer && il==0){
-                    // Offload_TODO: offload params logits
-                    cur = build_sparse_ffn(cur,
-                            model.layers[il+1].ffn_pred_up, model.layers[il+1].ffn_pred_up_b,  // GTODO: what if we dont have ffn_pred_up_b
-                            model.layers[il+1].ffn_pred_down, model.layers[il+1].ffn_pred_down_b,
-                            model.layers[il].ffn_pred_up, model.layers[il].ffn_pred_up_b,  // GTODO: what if we dont have ffn_pred_up_b
-                            model.layers[il].ffn_pred_down, model.layers[il].ffn_pred_down_b,
-                            sparse_idx_cross_layer,
-                            model.layers[il].ffn_up,   model.layers[il].ffn_up_b,
-                            model.layers[il].ffn_gate, model.layers[il].ffn_gate_b,
-                            model.layers[il].ffn_down_t, model.layers[il].ffn_down_b,
-                            model.layers[il].ffn_gpu_up, model.layers[il].ffn_gpu_gate, model.layers[il].ffn_gpu_down_t,
-                            model.layers[il].ffn_gpu_neu_idx, model.layers[il].ffn_gpu_neu_mask,
-                            model.layers[il].gpu_offload_ratio,
-                            ffn_gate_type, il);
-                    cb(cur, "ffn_out", il);
-                }
-                else if(use_sparkinfer && il==n_layer-1){
-                    cur = build_sparse_ffn(cur,
-                            NULL,NULL,NULL,NULL,
-                            NULL,NULL,NULL,NULL,
-                            sparse_idx_cross_layer,
-                            model.layers[il].ffn_up,   model.layers[il].ffn_up_b,
-                            model.layers[il].ffn_gate, model.layers[il].ffn_gate_b,
-                            model.layers[il].ffn_down_t, model.layers[il].ffn_down_b,
-                            model.layers[il].ffn_gpu_up, model.layers[il].ffn_gpu_gate, model.layers[il].ffn_gpu_down_t,
-                            model.layers[il].ffn_gpu_neu_idx, model.layers[il].ffn_gpu_neu_mask,
-                            model.layers[il].gpu_offload_ratio, 
-                            ffn_gate_type, il);
-                    cb(cur, "ffn_out", il);
-                }
-                else if(use_sparkinfer){
-                    cur = build_sparse_ffn(cur,
-                            model.layers[il+1].ffn_pred_up, model.layers[il+1].ffn_pred_up_b,
-                            model.layers[il+1].ffn_pred_down, model.layers[il+1].ffn_pred_down_b,
-                            NULL,NULL,NULL,NULL,
-                            sparse_idx_cross_layer,
-                            model.layers[il].ffn_up,   model.layers[il].ffn_up_b,
-                            model.layers[il].ffn_gate, model.layers[il].ffn_gate_b,
-                            model.layers[il].ffn_down_t, model.layers[il].ffn_down_b,
-                            model.layers[il].ffn_gpu_up, model.layers[il].ffn_gpu_gate, model.layers[il].ffn_gpu_down_t,
-                            model.layers[il].ffn_gpu_neu_idx, model.layers[il].ffn_gpu_neu_mask,
-                            model.layers[il].gpu_offload_ratio, 
-                            ffn_gate_type, il);
-                    cb(cur, "ffn_out", il);
+                if(use_sparkinfer){
+                    cur = build_sparse_ffn(&model, cur, il);
                 }
                 else{
                     cur = build_ffn(cur,
@@ -6268,7 +6224,6 @@ struct llm_build_opt : public llm_graph_context {
         auto * inp_attn = build_attn_inp_kv_unified();
         
         // 2) Transformer
-        ggml_tensor * sparse_idx_cross_layer = nullptr;
         for (int il = 0; il < n_layer; ++il) {
             // --- Pre-attention LayerNorm ---
             ggml_tensor * cur = build_norm(inpL,
@@ -6327,51 +6282,8 @@ struct llm_build_opt : public llm_graph_context {
                     LLM_NORM, il);
             cb(cur, "ffn_norm", il);
 
-            // GTODO: seems redundant, optimize it later
-            if(use_sparkinfer && il==0){
-                cur = build_sparse_ffn(cur,
-                        model.layers[il+1].ffn_pred_up, model.layers[il+1].ffn_pred_up_b,
-                        model.layers[il+1].ffn_pred_down, model.layers[il+1].ffn_pred_down_b,
-                        model.layers[il].ffn_pred_up, model.layers[il].ffn_pred_up_b,
-                        model.layers[il].ffn_pred_down, model.layers[il].ffn_pred_down_b,
-                        sparse_idx_cross_layer,
-                        model.layers[il].ffn_up,   model.layers[il].ffn_up_b,
-                        NULL, NULL,
-                        model.layers[il].ffn_down_t, model.layers[il].ffn_down_b,
-                        model.layers[il].ffn_gpu_up, NULL, model.layers[il].ffn_gpu_down_t,
-                        model.layers[il].ffn_gpu_neu_idx, model.layers[il].ffn_gpu_neu_mask,
-                        model.layers[il].gpu_offload_ratio, 
-                        LLM_FFN_NOGATE, il);
-                cb(cur, "ffn_out", il);
-            }
-            else if(use_sparkinfer && il==n_layer-1){
-                cur = build_sparse_ffn(cur,
-                        NULL,NULL,NULL,NULL,
-                        NULL,NULL,NULL,NULL,
-                        sparse_idx_cross_layer,
-                        model.layers[il].ffn_up,   model.layers[il].ffn_up_b,
-                        NULL, NULL,
-                        model.layers[il].ffn_down_t, model.layers[il].ffn_down_b,
-                        model.layers[il].ffn_gpu_up, NULL, model.layers[il].ffn_gpu_down_t,
-                        model.layers[il].ffn_gpu_neu_idx, model.layers[il].ffn_gpu_neu_mask,
-                        model.layers[il].gpu_offload_ratio,
-                        LLM_FFN_NOGATE, il);
-                cb(cur, "ffn_out", il);
-            }
-            else if(use_sparkinfer){
-                cur = build_sparse_ffn(cur,
-                        model.layers[il+1].ffn_pred_up, model.layers[il+1].ffn_pred_up_b,
-                        model.layers[il+1].ffn_pred_down, model.layers[il+1].ffn_pred_down_b,
-                        NULL,NULL,NULL,NULL,
-                        sparse_idx_cross_layer,
-                        model.layers[il].ffn_up,   model.layers[il].ffn_up_b,
-                        NULL, NULL,
-                        model.layers[il].ffn_down_t, model.layers[il].ffn_down_b,
-                        model.layers[il].ffn_gpu_up, NULL, model.layers[il].ffn_gpu_down_t,
-                        model.layers[il].ffn_gpu_neu_idx, model.layers[il].ffn_gpu_neu_mask,
-                        model.layers[il].gpu_offload_ratio, 
-                        LLM_FFN_NOGATE, il);
-                cb(cur, "ffn_out", il);
+            if(use_sparkinfer){
+                cur = build_sparse_ffn(&model, cur, il);
             }
             else{
                 cur = build_ffn(cur,

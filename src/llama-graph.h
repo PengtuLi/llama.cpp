@@ -395,6 +395,19 @@ struct llm_graph_params {
     const llm_graph_cb & cb;
 };
 
+struct llama_runtime_layer {
+    ggml_tensor * sparse_idx   = nullptr;
+    ggml_tensor * gpu_neu_idx  = nullptr;
+    ggml_tensor * gpu_neu_mask = nullptr;
+};
+
+struct llama_runtime_buffer {
+    std::vector<llama_runtime_layer> layers;
+    llama_runtime_buffer() = default;
+    explicit llama_runtime_buffer(int n_layer) {
+        layers.resize(n_layer);
+    }
+};
 struct llm_graph_context {
     const llm_arch arch;
 
@@ -452,6 +465,10 @@ struct llm_graph_context {
 
     void cb(ggml_tensor * cur, const char * name, int il) const;
 
+    // this is a buffer that can be used to store runtime data (in a single decode lifetime!!)), such as sparse_idx etc.
+    // GTODO[reload]: so we need another stuff to manage tensors that are persistent across multiple decodes (DFR_score, gpu_neu_idx/mask), this is important
+    std::unique_ptr<llama_runtime_buffer> runtime_buf;
+
     //
     // common
     //
@@ -494,39 +511,43 @@ struct llm_graph_context {
        llm_ffn_gate_type   type_gate,
                      int   il) const;
 
-// Offload_TODO: we need offload relevant tensors for offloading, e.g gpu_bucket
     ggml_tensor * build_sparse_ffn(
-            ggml_tensor * input,
-            ggml_tensor * pred_up,
-            ggml_tensor * pred_up_b,
-            ggml_tensor * pred_down,
-            ggml_tensor * pred_down_b,
+               const llama_model * model,
+                     ggml_tensor * input,
+                             int   il) const;
 
-            ggml_tensor * pred_up_0,
-            ggml_tensor * pred_up_b_0,
-            ggml_tensor * pred_down_0,
-            ggml_tensor * pred_down_b_0,
+    // ggml_tensor * build_sparse_ffn(
+    //         ggml_tensor * input,
+    //         ggml_tensor * pred_up,
+    //         ggml_tensor * pred_up_b,
+    //         ggml_tensor * pred_down,
+    //         ggml_tensor * pred_down_b,
 
-            ggml_tensor *& sparse_idx_cross_layer,
+    //         ggml_tensor * pred_up_0,
+    //         ggml_tensor * pred_up_b_0,
+    //         ggml_tensor * pred_down_0,
+    //         ggml_tensor * pred_down_b_0,
 
-            ggml_tensor * up,
-            ggml_tensor * up_b,
-            ggml_tensor * gate,
-            ggml_tensor * gate_b,
-            ggml_tensor * down,
-            ggml_tensor * down_b,
+    //         ggml_tensor *& sparse_idx_cross_layer,
 
-            ggml_tensor * gpu_up,
-            ggml_tensor * gpu_gate,
-            ggml_tensor * gpu_down,
+    //         ggml_tensor * up,
+    //         ggml_tensor * up_b,
+    //         ggml_tensor * gate,
+    //         ggml_tensor * gate_b,
+    //         ggml_tensor * down,
+    //         ggml_tensor * down_b,
+
+    //         ggml_tensor * gpu_up,
+    //         ggml_tensor * gpu_gate,
+    //         ggml_tensor * gpu_down,
             
-            ggml_tensor * gpu_neu_mask,
-            ggml_tensor * gpu_neu_idx,
-                  float   gpu_offload_ratio,
+    //         ggml_tensor * gpu_neu_mask,
+    //         ggml_tensor * gpu_neu_idx,
+    //               float   gpu_offload_ratio,
 
-    llm_ffn_gate_type   type_gate,
-                    int   il
-    ) const;
+    // llm_ffn_gate_type   type_gate,
+    //                 int   il
+    // ) const;
 
     ggml_tensor * build_sparse_mul_mat(
              ggml_tensor * cur,
