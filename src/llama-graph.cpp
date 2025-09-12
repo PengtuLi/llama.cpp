@@ -942,7 +942,7 @@ ggml_tensor * llm_graph_context::build_sparse_ffn(
                 
                 cur = gate_out;
             }else{
-                cur = up_out;
+                cur = ggml_relu(ctx0, up_out);
             }
 
             cur = build_sparse_axpy(cur, down, gpu_down, gpu_neu_idx, gpu_neu_mask, sparse_idx, "down", il, full_gpu); 
