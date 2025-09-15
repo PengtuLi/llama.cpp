@@ -912,13 +912,27 @@ ggml_tensor * llm_graph_context::build_sparse_ffn(
         ggml_tensor * gpu_neu_idx  = L->ffn_gpu_neu_idx;
         ggml_tensor * gpu_neu_mask = L->ffn_gpu_neu_mask;
 
-        llm_ffn_gate_type type_gate = LLM_FFN_PAR;
+        llm_ffn_gate_type type_gate = model->arch == LLM_ARCH_PRO_SPARSE_LLAMA ? LLM_FFN_PAR : LLM_FFN_NOGATE;
+        llm_ffn_op_type   act_type  = LLM_FFN_RELU;
+
+        auto act_fn = [&](ggml_tensor * tensor, const char * name) {
+            switch (act_type) {
+                case LLM_FFN_RELU:
+                    {
+                        tensor = ggml_relu(ctx0, tensor);
+                        cb(tensor, name, il);
+                    } break;
+                default:
+                    GGML_ASSERT(false && "unsupported activation function");
+            }
+            return tensor;
+        };
 
         {
             ggml_tensor * up_out = build_sparse_mul_mat(input, up, gpu_up, gpu_neu_idx, gpu_neu_mask, sparse_idx, "up", il, full_gpu); 
             if(up_b){
                 up_out = ggml_add(ctx0, up_out, up_b);
-                cb(up_out, "fnn_up_b", il);
+                cb(up_out, "ffn_up_b", il);
             }
 
             if(gate){
@@ -926,13 +940,12 @@ ggml_tensor * llm_graph_context::build_sparse_ffn(
                 
                 if(gate_b){
                     gate_out = ggml_add(ctx0, gate_out, gate_b);
-                    cb(gate_out, "fnn_gate_b", il);
+                    cb(gate_out, "ffn_gate_b", il);
                 }
 
                 // we only support par gate_op
                 if (type_gate == LLM_FFN_PAR){
-                    gate_out = ggml_relu(ctx0, gate_out);
-                    cb(gate_out, "ffn_gate_act",il);
+                    gate_out = act_fn(gate_out, "ffn_gate");
 
                     gate_out = ggml_mul(ctx0, gate_out, up_out);
                     cb(gate_out, "ffn_gate_par",il);
@@ -942,7 +955,7 @@ ggml_tensor * llm_graph_context::build_sparse_ffn(
                 
                 cur = gate_out;
             }else{
-                cur = ggml_relu(ctx0, up_out);
+                cur = act_fn(up_out, "ffn_up_act");
             }
 
             cur = build_sparse_axpy(cur, down, gpu_down, gpu_neu_idx, gpu_neu_mask, sparse_idx, "down", il, full_gpu); 
