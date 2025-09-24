@@ -925,6 +925,8 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
     "MUL_MAT_ID",
     "MUL_MAT_SPARSE",
     "AXPY_SPARSE",
+
+    "RELOAD",
     
     "OUT_PROD",
 
@@ -987,7 +989,7 @@ static const char * GGML_OP_NAME[GGML_OP_COUNT] = {
     "OPT_STEP_ADAMW",
 };
 
-static_assert(GGML_OP_COUNT == 84, "GGML_OP_COUNT != 84");
+static_assert(GGML_OP_COUNT == 85, "GGML_OP_COUNT != 85");
 
 static const char * GGML_OP_SYMBOL[GGML_OP_COUNT] = {
     "none",
@@ -2855,6 +2857,23 @@ struct ggml_tensor * ggml_axpy(
     return result;
 }
 
+enum ggml_status ggml_reload_weights(
+        struct ggml_context * ctx,
+        struct ggml_tensor  * weights,
+        struct ggml_tensor  * sparse_idx,
+        struct ggml_tensor  * gpu_neu_idx) {
+
+
+    struct ggml_tensor * result = ggml_new_tensor(ctx, weights->type, GGML_MAX_DIMS, weights->ne);
+
+    result->op     = GGML_OP_RELOAD_WEIGHTS;
+    result->src[0] = weights;
+    result->src[1] = sparse_idx;
+    result->src[2] = gpu_neu_idx;
+    result->src[3] = NULL; // GTODO: how do we manage DFR-score tensor here? where we store it? how we get it?
+
+    return GGML_STATUS_SUCCESS;
+}
 
 void ggml_mul_mat_set_prec(
         struct ggml_tensor * a,

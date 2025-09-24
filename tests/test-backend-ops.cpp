@@ -23,12 +23,16 @@ cmake -B build \
     
 cmake --build build --config debug --target test-backend-ops -j12
 
+//
     we only support one kernel test at a time, so the -o option is required,
     check the end of static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() to choose a kernel tests
+//
 
 // run: 
 ./build/bin/test-backend-ops test -o MULMAT_SPARSE -b CPU
 ./build/bin/test-backend-ops test -o AXPY_SPARSE -b CPU
+
+./build/bin/test-backend-ops test -o MULMAT_SPARSE -b CUDA0
 
 */
 
@@ -3535,7 +3539,7 @@ struct test_mulmat_sparse_cpu : public test_case {
     // 构造函数
     test_mulmat_sparse_cpu(
         ggml_type type_a_ = GGML_TYPE_F16,
-        ggml_type type_b_ = GGML_TYPE_F16,
+        ggml_type type_b_ = GGML_TYPE_F32,
         std::array<int64_t,2> ne_a_ = {4096, 11008},
         std::array<int64_t,2> ne_b_ = {4096, 4},
         std::array<int64_t,2> ne_sparse_idx_ = {11008, 4},
@@ -3577,17 +3581,22 @@ struct test_mulmat_sparse_cpu : public test_case {
 
         // 遍历所有 tensor 并初始化
         for (ggml_tensor * t = ggml_get_first_tensor(ctx); t != nullptr; t = ggml_get_next_tensor(ctx, t)) {
-            if (t->type == GGML_TYPE_F16) {
+            if (std::string(t->name) == "weight") {
                 ggml_fp16_t * data = reinterpret_cast<ggml_fp16_t*>(t->data);
                 for (int i = 0; i < ggml_nelements(t); ++i) {
                     data[i] = ggml_fp32_to_fp16(dist(rng));
                 }
-            } else if (t->type == GGML_TYPE_F32) {
+            } else if (std::string(t->name) == "input") {
                 float * data = reinterpret_cast<float*>(t->data);
                 for (int i = 0; i < ggml_nelements(t); ++i) {
                     data[i] = dist(rng);
                 }
-            } else if (t->type == GGML_TYPE_I64) {
+            } else if (std::string(t->name) == "sparse_idx") {
+                float * data = reinterpret_cast<float*>(t->data);
+                for (int i = 0; i < ggml_nelements(t); ++i) {
+                    data[i] = dist(rng);
+                }
+            } else if (std::string(t->name) == "cpu_mask") {
                 int64_t * data = reinterpret_cast<int64_t*>(t->data);
                 for (int i = 0; i < ggml_nelements(t); ++i) {
                     data[i] = dist(rng) < 0.8 ? 0 : 1;
@@ -3697,9 +3706,9 @@ struct test_mulmat_sparse_cpu : public test_case {
                     ok = false;
                     break;
                 }
-                // else{
-                //     printf("[Pass!]    index (token:%d, neu:%d): got %f, expected %f\n", t, r, out_data[t * nrows + r], ref_data[t * nrows + r]);
-                // }
+                else{
+                    // printf("[Pass!]    index (token:%d, neu:%d): got %f, expected %f\n", t, r, out_data[t * nrows + r], ref_data[t * nrows + r]);
+                }
             }
         }
 
@@ -3728,7 +3737,7 @@ struct test_axpy_sparse_cpu : public test_case {
     // 构造函数
     test_axpy_sparse_cpu(
         ggml_type type_a_ = GGML_TYPE_F16,
-        ggml_type type_b_ = GGML_TYPE_F16,
+        ggml_type type_b_ = GGML_TYPE_F32,
         std::array<int64_t,2> ne_a_ = {4096, 11008},
         std::array<int64_t,2> ne_b_ = {11008, 4},
         std::array<int64_t,2> ne_sparse_idx_ = {11008, 4},
@@ -3770,17 +3779,22 @@ struct test_axpy_sparse_cpu : public test_case {
 
         // 遍历所有 tensor 并初始化
         for (ggml_tensor * t = ggml_get_first_tensor(ctx); t != nullptr; t = ggml_get_next_tensor(ctx, t)) {
-            if (t->type == GGML_TYPE_F16) {
+            if (std::string(t->name) == "weight") {
                 ggml_fp16_t * data = reinterpret_cast<ggml_fp16_t*>(t->data);
                 for (int i = 0; i < ggml_nelements(t); ++i) {
                     data[i] = ggml_fp32_to_fp16(dist(rng));
                 }
-            } else if (t->type == GGML_TYPE_F32) {
+            } else if (std::string(t->name) == "input") {
                 float * data = reinterpret_cast<float*>(t->data);
                 for (int i = 0; i < ggml_nelements(t); ++i) {
                     data[i] = dist(rng);
                 }
-            } else if (t->type == GGML_TYPE_I64) {
+            } else if (std::string(t->name) == "sparse_idx") {
+                float * data = reinterpret_cast<float*>(t->data);
+                for (int i = 0; i < ggml_nelements(t); ++i) {
+                    data[i] = dist(rng);
+                }
+            } else if (std::string(t->name) == "cpu_mask") {
                 int64_t * data = reinterpret_cast<int64_t*>(t->data);
                 for (int i = 0; i < ggml_nelements(t); ++i) {
                     data[i] = dist(rng) < 0.8 ? 0 : 1;
@@ -3917,6 +3931,214 @@ struct test_axpy_sparse_cpu : public test_case {
     }
 };
 
+
+// -------------GPU sparse kernels test---------------
+// mulmat_sparse, cuda version
+struct test_mulmat_sparse_gpu : public test_case {
+    const ggml_type type_a;
+    const ggml_type type_b;
+    const std::array<int64_t, 2> ne_a; // weight shape [nrows, ncols]
+    const std::array<int64_t, 2> ne_b; // input shape [ncols, n_tokens]
+    const std::array<int64_t, 2> ne_sparse_idx; // sparse index shape [num_gpu_neurons]
+    const std::array<int64_t, 1> ne_gpu_neu_idx;   // cpu mask shape [nrows, n_tokens]
+    int64_t a = 1;
+
+    // 构造函数
+    test_mulmat_sparse_gpu(
+        ggml_type type_a_ = GGML_TYPE_F16,
+        ggml_type type_b_ = GGML_TYPE_F32,
+        std::array<int64_t,2> ne_a_ = {4096, 11008},
+        std::array<int64_t,2> ne_b_ = {4096, 4},
+        std::array<int64_t,2> ne_sparse_idx_ = {11008, 4},
+        std::array<int64_t,1> ne_gpu_neu_idx_ = {8806})
+        : type_a(type_a_), type_b(type_b_), ne_a(ne_a_), ne_b(ne_b_),
+          ne_sparse_idx(ne_sparse_idx_), ne_gpu_neu_idx(ne_gpu_neu_idx_) {}
+
+    std::string vars() override {
+        return VARS_TO_STR3(type_a, ne_a, ne_b);
+    }
+
+    ggml_tensor * build_graph(ggml_context * ctx) override {
+        // 创建 weight tensor
+        ggml_tensor * a = ggml_new_tensor(ctx, type_a, 2, ne_a.data());
+        ggml_set_name(a, "weight");
+
+        // 创建输入 tensor
+        ggml_tensor * b = ggml_new_tensor(ctx, type_b, 2, ne_b.data());
+        ggml_set_name(b, "input");
+
+        // 创建 sparse index tensor
+        ggml_tensor * sparse_idx = ggml_new_tensor(ctx, GGML_TYPE_F32, 2, ne_sparse_idx.data());
+        ggml_set_name(sparse_idx, "sparse_idx");
+
+        // 创建 gpu_neu_idx tensor
+        ggml_tensor * gpu_neu_idx = ggml_new_tensor(ctx, GGML_TYPE_I64, 1, ne_gpu_neu_idx.data());
+        ggml_set_name(gpu_neu_idx, "gpu_neu_idx");
+
+        // 调用自定义 mul_mat_sparse kernel
+        ggml_tensor * out = ggml_mul_mat_sparse(ctx, a, b, sparse_idx, gpu_neu_idx);
+        ggml_set_name(out, "out");
+
+        return out;
+    }
+
+    void initialize_tensors(ggml_context * ctx) override {
+        std::mt19937 rng(1234);
+        std::uniform_real_distribution<float> dist(0.0f, 1.0f);
+
+        // 遍历所有 tensor 并初始化
+        for (ggml_tensor * t = ggml_get_first_tensor(ctx); t != nullptr; t = ggml_get_next_tensor(ctx, t)) {
+            if (std::string(t->name) == "weight") {
+                // weight tensor should contain random values between 0 and 1
+                std::vector<ggml_fp16_t> weight_data(ggml_nelements(t));
+                for (size_t i = 0; i < weight_data.size(); ++i) {
+                    weight_data[i] = ggml_fp32_to_fp16(dist(rng));
+                }
+                t->data = weight_data.data();
+            } else if (std::string(t->name) == "input") {
+                // input tensor should contain random values between 0 and 1
+                std::vector<float> input_data(ggml_nelements(t));
+                for (size_t i = 0; i < input_data.size(); ++i) {
+                    input_data[i] = dist(rng);
+                }
+                t->data = input_data.data();
+            } else if (std::string(t->name) == "sparse_idx") {
+                // sparse_idx tensor should contain random values between 0 and 1
+                std::vector<float> sparse_data(ggml_nelements(t));
+                for (size_t i = 0; i < sparse_data.size(); ++i) {
+                    sparse_data[i] = dist(rng);
+                }
+                t->data = sparse_data.data();
+            } else if (std::string(t->name) == "gpu_neu_idx") {
+                int64_t * data = reinterpret_cast<int64_t*>(t->data);
+                for (int i = 0; i < ggml_nelements(t); ++i) {
+                    std::vector<int64_t> unique_values(11008);
+                    std::iota(unique_values.begin(), unique_values.end(), 0);
+                    std::shuffle(unique_values.begin(), unique_values.end(), rng);
+                    data[i] = unique_values[i];
+                }
+            }
+        }
+    }
+    
+    bool eval_customized() override {
+        // 1) ctx：no_alloc=true，让 backend 来分配实际 buffer
+        ggml_init_params params = {
+            ggml_tensor_overhead() * 128 + ggml_graph_overhead(),
+            nullptr,
+            true
+        };
+        ggml_context * ctx = ggml_init(params);
+        GGML_ASSERT(ctx);
+
+        gf = ggml_new_graph(ctx);
+        add_sentinel(ctx);
+
+        // 2) build graph
+        ggml_tensor * out = build_graph(ctx);
+        GGML_ASSERT(out);
+        printf("  %s(%s): ", op_desc(out).c_str(), vars().c_str());
+        fflush(stdout);
+
+        add_sentinel(ctx);
+
+        // 3) CUDA backend
+        ggml_backend_t backend_cuda = ggml_backend_init_by_type(GGML_BACKEND_DEVICE_TYPE_GPU, nullptr);
+        GGML_ASSERT(backend_cuda);
+
+        // 分配到 GPU
+        ggml_backend_buffer_t buf = ggml_backend_alloc_ctx_tensors(ctx, backend_cuda);
+        GGML_ASSERT(buf);
+
+        // 4) build forward graph
+        ggml_build_forward_expand(gf, out);
+        for (ggml_tensor * s : sentinels) ggml_graph_add_node(gf, s);
+
+        // 5) 在主机端准备数据并上传到 GPU（不要解引用 t->data！）
+        auto A          = ggml_get_tensor(ctx, "weight");
+        auto B          = ggml_get_tensor(ctx, "input");
+        auto sparse_idx = ggml_get_tensor(ctx, "sparse_idx");
+        auto gpu_neu_idx= ggml_get_tensor(ctx, "gpu_neu_idx");
+
+        const int nrows = A->ne[1];
+        const int ncols = A->ne[0];
+        const int n_tokens = B->ne[1];
+        const int num_gpu_neurons = 8806;
+
+        // 5.1 生成 host 端初始化数据
+        std::mt19937 rng(1234);
+        std::uniform_real_distribution<float> dist(0.0f, 1.0f);
+
+        std::vector<ggml_fp16_t> h_A(nrows * ncols);
+        for (size_t i = 0; i < h_A.size(); ++i) h_A[i] = ggml_fp32_to_fp16(dist(rng));
+
+        std::vector<float> h_B(ncols * n_tokens);
+        for (size_t i = 0; i < h_B.size(); ++i) h_B[i] = dist(rng);
+
+        std::vector<float> h_sparse_idx(nrows * n_tokens);
+        for (size_t i = 0; i < h_sparse_idx.size(); ++i) h_sparse_idx[i] = dist(rng); // 0~1，用 >0.5f 作为开关
+
+        // 一次性生成唯一的神经元索引集合
+        std::vector<int64_t> perm(nrows);
+        std::iota(perm.begin(), perm.end(), 0);
+        std::shuffle(perm.begin(), perm.end(), rng);
+        std::vector<int64_t> h_gpu_neu_idx(perm.begin(), perm.begin() + num_gpu_neurons);
+
+        // 5.2 上传到 GPU
+        ggml_backend_tensor_set(A,          h_A.data(),       0, h_A.size()       * sizeof(ggml_fp16_t));
+        ggml_backend_tensor_set(B,          h_B.data(),       0, h_B.size()       * sizeof(float));
+        ggml_backend_tensor_set(sparse_idx, h_sparse_idx.data(),  0, h_sparse_idx.size()  * sizeof(float));
+        ggml_backend_tensor_set(gpu_neu_idx,h_gpu_neu_idx.data(), 0, h_gpu_neu_idx.size() * sizeof(int64_t));
+
+        // 6) 执行计算（GPU）
+        ggml_backend_graph_compute(backend_cuda, gf);
+
+        // 7) 从 GPU 拉回 out 做对比
+        std::vector<float> out_data(ggml_nelements(out));
+        ggml_backend_tensor_get(out, out_data.data(), 0, out_data.size()*sizeof(float));
+
+        // 8) 计算参考结果（直接用 host 端我们刚刚生成的 h_A/h_B/h_sparse/h_gpu_idx）
+        //    注意：把 h_A/h_B 先转成 f32 更方便
+        std::vector<float> fA(h_A.size()), fB(h_B.size());
+        for (size_t i = 0; i < h_A.size(); ++i) fA[i] = ggml_fp16_to_fp32(h_A[i]);
+        for (size_t i = 0; i < h_B.size(); ++i) fB[i] = h_B[i];
+
+        // 参考实现：只对 gpu_neu_idx 以及 sparse_idx>0.5 的行做 dense matmul
+        std::vector<float> ref(out_data.size(), 0.0f);
+
+        bool ok = true;
+        for (int t = 0; t < n_tokens; t++) {
+            for (int i = 0; i < num_gpu_neurons; i++) {
+                int neu = h_gpu_neu_idx[i];
+                if (h_sparse_idx[t*nrows + neu] <= 0.5f) {
+                    // printf("[SPARSE]   index (token:%d, neu:%d), sparse_idx=%f\n", t, neu, h_sparse_idx[t*nrows + neu]);
+                    continue;
+                }
+                for(int c = 0;c < ncols;c++){
+                    ref[t * nrows + neu] += fA[neu * ncols + c] * fB[t * ncols + c];
+                }
+                float diff = std::abs(out_data[t * nrows + neu] - ref[t * nrows + neu]);
+                if (diff > max_nmse_err()) {
+                    printf("[Mismatch] index (token:%d, neu:%d): got %f, expected %f\n", t, neu, out_data[t * nrows + neu], ref[t * nrows + neu]);
+                    ok = false;
+                }
+                else{
+                    printf("[Pass!]    index (token:%d, neu:%d): got %f, expected %f\n", t, neu, out_data[t * nrows + neu], ref[t * nrows + neu]);
+                }
+            }
+        }
+        ggml_backend_buffer_free(buf);
+        ggml_free(ctx);
+
+        return ok;
+    }
+
+
+    // GTODO: we have precision loss from fp16/32 conversion?
+    double max_nmse_err() override {
+        return 1e-2;
+    }
+};
 
 enum llm_norm_type {
     LLM_NORM,
@@ -5034,8 +5256,9 @@ static std::vector<std::unique_ptr<test_case>> make_test_cases_eval() {
 //     test_cases.emplace_back(new test_conv_2d_dw({512, 512, 256, 1}, {3, 3, 1, 256}, 1, 1, 1, false));
 //     test_cases.emplace_back(new test_conv_2d_dw({512, 512, 256, 1}, {3, 3, 1, 256}, 1, 1, 1, true));
 }
-    test_cases.push_back(std::make_unique<test_mulmat_sparse_cpu>());
-    // test_cases.push_back(std::make_unique<test_axpy_sparse_cpu>());
+    // test_cases.push_back(std::make_unique<test_mulmat_sparse_cpu>());
+    test_cases.push_back(std::make_unique<test_axpy_sparse_cpu>());
+    // test_cases.push_back(std::make_unique<test_mulmat_sparse_gpu>());
     return test_cases;
 }
 

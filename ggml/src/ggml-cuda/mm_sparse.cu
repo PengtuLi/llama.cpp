@@ -16,10 +16,9 @@ static __global__ void mul_mat_vec_sparse(
     const int64_t row         = blockIdx.x;  // (0, num_gpu_neurons)
     const int     tid         = threadIdx.x; // (0, 256)
 
-    int neu = gpu_neu_idx ? gpu_neu_idx[row] : row; // (one of the neurons(on gpu) original index)
+    int64_t neu = gpu_neu_idx ? gpu_neu_idx[row] : row; // (one of the neurons(on gpu) original index)
     
     if(sparse_idx[neu] < 0.5f){ // GTODO: do we need sparse_threshold?
-        if (tid == 0) dst[neu] = 0.0f; // GTODO: this should be done in initialization. ps: outputs are different if we dont set 0 before return, meaning dst was not initialized as 0 at the beginning?
         return;
     }
 
@@ -101,6 +100,8 @@ static __global__ void mul_mat_vec_sparse(
     dst[neu] = sumf;
 }
 
+// 
+
 // batch
 // GTODO: we have not tested the kernel so far, test it when batch-example could be run
 template <typename T, typename type_acc, int block_size>
@@ -122,33 +123,30 @@ static __global__ void mul_mat_batch_sparse(
     const int64_t s1col_b     = blockIdx.y;   // (0, scr1_ncols) the block that responsible for the specific token in batch
     const int     tid         = threadIdx.x; // (0, 256)
 
-    constexpr int warp_size   = ggml_cuda_get_physical_warp_size();
-
-    int neu = gpu_neu_idx ? gpu_neu_idx[row] : row; // (one of the gpu_neurons index)
+    int64_t neu = gpu_neu_idx ? gpu_neu_idx[row] : row; // (one of the gpu_neurons index)
 
     x          += ncols * row;
     y          += ncols * s1col_b;
     dst        += nrows * s1col_b;
     sparse_idx += nrows * s1col_b;
 
-    // we have ensure the cuda memory error will happen below
+    // print out x, y, dst address and sparse_idx[neu] value and address for debug
+    // if(tid == 0 && row % 500 == 0)
+    //     printf("x=%p, y=%p, dst=%p, sparse_idx[%ld]=%f, address=%p\n", x, y, dst, neu, sparse_idx[neu], &sparse_idx[neu]);
 
-    // if(tid == 0) printf("row=%d ready for sparse_idx[%d]=%f\n",row, neu, sparse_idx[neu]);
-    if(sparse_idx[neu] < 0.5f){ // GTODO: do we need sparse_threshold?
-        // if(tid == 0) printf("row=%d in sparse_idx[%d]=%f\n",row, neu, sparse_idx[neu]);  
-        if (tid == 0) dst[neu] = 0.0f;
-        return;
-    }
-
-    // we have ensure the cuda memory error will happen above
+    // if(tid == 0 && row % 500 == 0) printf("s1col_b=%ld, row=%ld sparse_idx[%ld]=%f, idx_address=%p\n", s1col_b, row, neu, sparse_idx[neu], &sparse_idx[neu]);
+    // if(sparse_idx[neu] < 0.5f){ // GTODO: do we need sparse_threshold?
+    //     dst[neu] = 0.0f;
+    //     return;
+    // }
 
     const float2 * y2 = (const float2 *) y;
 
     extern __shared__ char data_mmv[];
     float * buf_iw = (float *) data_mmv;
 
-    if (block_size > warp_size) {
-        if (tid < warp_size) {
+    if (block_size > WARP_SIZE) {
+        if (tid < WARP_SIZE) {
             buf_iw[tid] = 0.0f;
         }
         __syncthreads();
@@ -201,16 +199,16 @@ static __global__ void mul_mat_batch_sparse(
         static_assert(std::is_same<T, void>::value, "unsupported type");
     }
 
-    sumf = warp_reduce_sum<warp_size>(sumf);
+    sumf = warp_reduce_sum<WARP_SIZE>(sumf);
 
-    if (block_size > warp_size) {
-        buf_iw[tid/warp_size] = sumf;
+    if (block_size > WARP_SIZE) {
+        buf_iw[tid/WARP_SIZE] = sumf;
         __syncthreads();
-        if (tid >= warp_size) {
+        if (tid >= WARP_SIZE) {
             return;
         }
         sumf = buf_iw[tid];
-        sumf = warp_reduce_sum<warp_size>(sumf);
+        sumf = warp_reduce_sum<WARP_SIZE>(sumf);
     }
 
     if (tid != 0) {
@@ -220,34 +218,123 @@ static __global__ void mul_mat_batch_sparse(
     dst[neu] = sumf;
 }
 
-static __global__ void print(
-    const float *       __restrict__ sparse_idx, 
-    const int64_t *     __restrict__ gpu_neu_idx,
-    const int64_t ncols,
-    const int64_t nrows,
-    const int64_t src1_ncols)
-{
-    if (blockIdx.x == 0 && threadIdx.x == 0) {
-        // printf("\n=== sparse_idx ===\n");
-        // for (int i = 0; i < nrows && (i % 100)==0; i++) {
-        //     printf("sparse_idx[%d] = %f\n", i, sparse_idx[i]);
-        // }
+// // powerinfer kernels:
+// static __device__ void convert_f16(const void * vx, const int ib, const int iqs, dfloat2 & v){
+//     const half * x = (const half *) vx;
 
-        if(gpu_neu_idx){
-            printf("=== gpu_neu_idx ===\n");
-            for (int i = 0; i < nrows; i++) {
-                printf("gpu_neu_idx[%d] = %lld\n", i, gpu_neu_idx[i]);
-            }            
-        }
+//     // automatic half -> float type cast if dfloat == float
+//     v.x = x[ib + iqs + 0];
+//     v.y = x[ib + iqs + 1];
+// }
 
-    }
-}
+// static __global__ void dequantize_mul_mat_batch_sparse(const void * __restrict__ vx, const dfloat * __restrict__ y, float * __restrict__ dst, const int ncols, const int nrows, int src1_cols, int dst_ne0,int64_t * lst, float * idx) {
+//     // qk = quantized weights per x block
+//     // qr = number of quantized weights per data value in x block
+//     const int gpu_row = blockIdx.y*blockDim.y + threadIdx.y;
+//     int qk = 1;
+//     int qr = 1;
+//     int GGML_CUDA_DMMV_X = 32;
+
+//     if (gpu_row >= nrows) {
+//         return;
+//     }
+//     int row = lst ? lst[gpu_row] : gpu_row;
+
+//     const int tid = threadIdx.x;
+
+//     const int iter_stride = 2*GGML_CUDA_DMMV_X;
+//     const int vals_per_iter = iter_stride / WARP_SIZE; // num quantized vals per thread and i iter
+//     const int y_offset = qr == 1 ? 1 : qk/2;
+//     float * loop_idx = idx;;
+//     dfloat * loop_y = (dfloat *)y;
+//     float * loop_dst = dst;
+
+
+
+//     float tmp = 0.0f;
+
+//     for (int col_id = 0; col_id < src1_cols; col_id++)
+//     {
+//         __syncthreads();
+//         tmp = 0.0f;
+//         // if (loop_idx[row] < 0.5f)
+//         // {
+//         //     loop_dst += dst_ne0;
+//         //     loop_idx += dst_ne0;
+//         //     loop_y += ncols;
+//         //     continue;
+//         // }
+
+//         for (int i = 0; i < ncols; i += iter_stride)
+//         {
+//             const int col = i + vals_per_iter * tid;
+//             const int ib = (gpu_row * ncols + col) / qk; // x block index
+//             const int iqs = (col % qk) / qr;         // x quant index
+//             const int iybs = col - col % qk;         // y block start index
+
+// // processing >2 values per i iter is faster for fast GPUs
+// #pragma unroll
+//             for (int j = 0; j < vals_per_iter; j += 2)
+//             {
+//                 // process 2 vals per j iter
+
+//                 // dequantize
+//                 // for qr = 2 the iqs needs to increase by 1 per j iter because 2 weights per data val
+//                 dfloat2 v;
+//                 convert_f16(vx, ib, iqs + j / qr, v);
+
+//                 // matrix multiplication
+
+//                 tmp += v.x * loop_y[iybs + iqs + j / qr + 0];
+//                 tmp += v.y * loop_y[iybs + iqs + j / qr + y_offset];
+//                 // #endif
+//             }
+//         }
+//         atomicAdd(&loop_dst[row], tmp);
+//         loop_dst += dst_ne0;
+//         loop_idx += dst_ne0;
+//         loop_y += ncols;
+//     }
+// }
+
+
+// static __global__ void print(
+//     const float *       __restrict__ sparse_idx, 
+//     const int64_t *     __restrict__ gpu_neu_idx,
+//     const int64_t ncols,
+//     const int64_t nrows,
+//     const int64_t src1_ncols)
+// {
+//     if (blockIdx.x == 0 && threadIdx.x == 0) {
+//         printf("\n=== sparse_idx ===\n");
+//         for (int t = 0; t < src1_ncols; t++) {
+//             int cnt = 0;
+//             for (int i = t * nrows; i < (t + 1) * nrows; i++) {
+//                 if (sparse_idx[i] > 0.5f) { 
+//                     cnt++;
+//                 }
+//             }
+//             printf("sparse_idx cnt in batch %d: %d, activation_ratio: %.3f\n", t, cnt, float(cnt) / float(nrows));
+//         }
+
+//         if(gpu_neu_idx){
+//             printf("=== gpu_neu_idx ===\n");
+//             for (int i = 0; i < nrows; i++) {
+//                 printf("gpu_neu_idx[%d] = %lld\n", i, gpu_neu_idx[i]);
+//             }            
+//         }
+
+//     }
+// }
 
 template <typename T, typename type_acc>
 static void launch_mul_mat_cuda_sparse(
         const T * x, const float * y, const float * sparse_idx, const int64_t * gpu_neu_idx, float * dst,
         const int64_t ncols, const int64_t nrows, const int64_t src1_ncols, int64_t num_gpu_neurons,cudaStream_t stream) {
 
+    // print base  address
+    // printf("\n x base address: %p, y base address: %p, dst base address: %p, sparse_idx base address: %p\n", x, y, dst, sparse_idx);
+    // printf("launch_mul_mat_cuda_sparse: ncols=%ld, nrows=%ld, src1_ncols=%ld, num_gpu_neurons=%ld\n", ncols, nrows, src1_ncols, num_gpu_neurons);
     // print<<<1, 32, 0, stream>>>(sparse_idx, gpu_neu_idx, ncols, nrows, src1_ncols);
     
     GGML_ASSERT(ncols % 2 == 0);
@@ -272,6 +359,7 @@ static void launch_mul_mat_cuda_sparse(
 
     // Shared memory size
     const int smem = WARP_SIZE * sizeof(float);
+    // printf("src1_ncols=%ld, num_gpu_neurons=%ld, block_size_best=%ld, niter_best=%ld\n", src1_ncols, num_gpu_neurons, block_size_best, niter_best);
 
     if (src1_ncols == 1) {
         // vector case
@@ -313,7 +401,18 @@ static void launch_mul_mat_cuda_sparse(
         }
     } else {
         // Batch case
+        // dequantize_mul_mat_batch_sparse<<<dim3(1, nrows, 1), dim3(32, 1, 1), 0, stream>>>(
+        //     x, (const dfloat *)y, dst, ncols, nrows, src1_ncols, nrows, (int64_t *)gpu_neu_idx, (float *)sparse_idx);
         dim3 grid(num_gpu_neurons, src1_ncols, 1);
+        // float * sparse_idx_squeezed;
+        // CUDA_CHECK(cudaMalloc((void **)&sparse_idx_squeezed, sizeof(float)*nrows));
+        // squeezed_idx<<<dim3(num_gpu_neurons,1,1), dim3(32,1,1), 0, stream>>>(sparse_idx, nrows, src1_ncols, sparse_idx_squeezed);
+        // sparse_idx = sparse_idx_squeezed;
+
+        // check powerinfer type batch kernels
+        // dequantize_mul_mat_batch_sparse<<<dim3(1, num_gpu_neurons, 1), dim3(32, 1, 1), 0, stream>>>(
+        //     x, (const dfloat *)y, dst, ncols, nrows, src1_ncols, nrows, (int64_t *)gpu_neu_idx, (float *)sparse_idx);
+
         switch (block_size_best) {
             case 32:
                 mul_mat_batch_sparse<T,type_acc,32><<<grid, dim3(32,1,1), smem, stream>>>(
@@ -368,34 +467,6 @@ static void mul_mat_cuda_sparse(
         (x, y, sparse_idx, gpu_neu_idx, dst, ncols, nrows, src1_ncols, num_gpu_neurons, stream);
 }
 
-// GTODO: this is very hacky, we need to add more safety check later
-// but more importantly, what's the diffence between tensor->data & tensor-extra->data_device[device]? which to load???
-void * ggml_cuda_get_tensor_data(const ggml_tensor * tensor) {
-    return tensor->data;
-    // if (tensor->data) {
-    //     printf("no tensor data %s\n",tensor->name);
-    //     // GGML_ASSERT(false && "tensor is null");
-    //     // return nullptr;
-    // }
-    // else{
-    //     printf("have tensor data %s\n",tensor->name);
-    // }
-    // if (!tensor->extra) {
-    //     printf("no tensor-extra, %s\n",tensor->name); 
-    //     // GGML_ASSERT(false && "tensor->extra is null"); // sparse_idx在这里会报错, saprse_idx is only at tensor->data 
-    //     // return nullptr;
-    // }
-    // else{
-    //     printf("have tensor-extra %s\n",tensor->name);
-    // }
-    // int device = ggml_cuda_get_device();
-    // auto extra = (ggml_tensor_extra_gpu *) tensor->extra;
-    // return nullptr;
-    // if(tensor->data)
-    //     return extra->data_device[device];
-}
-
-
 void ggml_cuda_op_mul_mat_sparse(
     ggml_backend_cuda_context & ctx,
     const ggml_tensor * src0, 
@@ -421,25 +492,17 @@ void ggml_cuda_op_mul_mat_sparse(
     const int64_t ncols = src0->ne[0];
     const int64_t nrows = row_high - row_low;
 
-    GGML_ASSERT(ggml_cuda_get_tensor_data(dst->src[2])!=nullptr  && "missing sparse_idx");
+    GGML_ASSERT((dst->src[2]->data)!=nullptr  && "missing sparse_idx");
 
-    // GTODO:  this is a hack, we encounter sigsegv error when printf sparse_idx[0]
-    float * sparse_idx = static_cast<float *>(ggml_cuda_get_tensor_data(dst->src[2]));
-    int64_t * gpu_neu_idx = dst->src[3] != NULL ? static_cast<int64_t *>(ggml_cuda_get_tensor_data(dst->src[3])) : NULL;
+    float * sparse_idx = static_cast<float *>(dst->src[2]->data);
+    int64_t * gpu_neu_idx = dst->src[3] != NULL ? static_cast<int64_t *>(dst->src[3]->data) : NULL;
     int64_t num_gpu_neurons = dst->src[3] ? dst->src[3]->ne[0] : nrows;
-    // GGML_ABORT("debugging");
-    // // for(int i = 0;i < 100;i++){
-    //      printf("sparse_idx[%d]=%f\n",0,sparse_idx[0]);
-    // // }
-
-    // // for(int i = 0;i < 100;i++){
-    // //     printf("gpu_neu_id[%d]=%l\n",i,gpu_neu_idx[i]);
-    // // }
-
-    // // GGML_ABORT("DEBUGGING");
 
     const int cc = ggml_cuda_info().devices[ggml_cuda_get_device()].cc;
     const enum ggml_prec prec = fast_fp16_available(cc) ? ggml_prec(dst->op_params[0]) : GGML_PREC_F32;
+
+    // set dst_dd_i as zero
+    CUDA_CHECK(cudaMemsetAsync(dst_dd_i, 0, sizeof(float)*dst->ne[0]*dst->ne[1], stream));  
 
     switch (src0->type) {
         case GGML_TYPE_F32: {

@@ -1543,7 +1543,7 @@ static void ggml_compute_forward_mul_mat_sparse_one_chunk(
 
     // attempt to reduce false-sharing (does not seem to make a difference)
     // 16 * 2, accounting for mmla kernels
-    float tmp[32];
+    // float tmp[32];
 
     for (int64_t iir1 = ir1_start; iir1 < ir1_end; iir1 += blck_1) {
         for (int64_t iir0 = ir0_start; iir0 < ir0_end; iir0 += blck_0) {
@@ -1572,21 +1572,24 @@ static void ggml_compute_forward_mul_mat_sparse_one_chunk(
                         : (i11 * nb11 + i12 * nb12 + i13 * nb13));
                 float * dst_col = (float*)((char*)dst->data + (i1 * nb1 + i2 * nb2 + i3 * nb3));
 
-                //for (int64_t ir0 = iir0; ir0 < iir0 + blck_0 && ir0 < ir0_end; ++ir0) {
-                //    vec_dot(ne00, &dst_col[ir0], src0_row + ir0*nb01, src1_col);
-                //}
-
-                for (int64_t ir0 = iir0; ir0 < iir0 + blck_0 && ir0 < ir0_end; ir0 += num_rows_per_vec_dot) {
+                for (int64_t ir0 = iir0; ir0 < iir0 + blck_0 && ir0 < ir0_end; ++ir0) {
                     const int64_t idx_flat = ir0 + ir1 * ne01;
-                    if (!(cpu_mask[idx_flat%ne01] == 0 && sparse_idx[idx_flat] >= 0.5f)) {
-                        continue;
-                    }
-                    vec_dot(ne00, &tmp[ir0 - iir0], (num_rows_per_vec_dot > 1 ? 16 : 0), src0_row + ir0 * nb01, (num_rows_per_vec_dot > 1 ? nb01 : 0), src1_col, (num_rows_per_vec_dot > 1 ? src1_col_stride : 0), num_rows_per_vec_dot);
+                    if (cpu_mask[idx_flat % ne01] == 1) continue; // skip gpu neurons
+                    if (sparse_idx[idx_flat] < 0.5f && dst->ne[1]==1) continue;    // skip not activated neurons, use sparse inference only in case of ne1==1
+                    vec_dot(ne00, &dst_col[ir0], 0, src0_row + ir0*nb01, 0, src1_col, 0, 1);
                 }
 
-                for (int cn = 0; cn < num_rows_per_vec_dot; ++cn) {
-                    memcpy(&dst_col[iir0 + cn * nb1 / nb0], tmp + (cn * 16), (MIN(iir0 + blck_0, ir0_end) - iir0) * sizeof(float));
-                }
+                // memset(tmp, 0, sizeof(float)*32);
+                // for (int64_t ir0 = iir0; ir0 < iir0 + blck_0 && ir0 < ir0_end; ir0 += num_rows_per_vec_dot) {
+                //     const int64_t idx_flat = ir0 + ir1 * ne01;
+                //     if (cpu_mask[idx_flat % ne01] == 1) continue; // skip gpu neurons
+                //     if (sparse_idx[idx_flat] < 0.5f) continue;    // skip not activated neurons
+                //     vec_dot(ne00, &tmp[ir0 - iir0], (num_rows_per_vec_dot > 1 ? 16 : 0), src0_row + ir0 * nb01, (num_rows_per_vec_dot > 1 ? nb01 : 0), src1_col, (num_rows_per_vec_dot > 1 ? src1_col_stride : 0), num_rows_per_vec_dot);
+                // }
+
+                // for (int cn = 0; cn < num_rows_per_vec_dot; ++cn) {
+                //     memcpy(&dst_col[iir0 + cn * nb1 / nb0], tmp + (cn * 16), (MIN(iir0 + blck_0, ir0_end) - iir0) * sizeof(float));
+                // }
             }
         }
     }
@@ -1826,6 +1829,7 @@ static void ggml_compute_forward_mul_mat_sparse_one_chunk_premask(
                 //    vec_dot(ne00, &dst_col[ir0], src0_row + ir0*nb01, src1_col);
                 //}
 
+                memset(tmp, 0, sizeof(float)*32);
                 for (int64_t ir0 = iir0; ir0 < iir0 + blck_0 && ir0 < ir0_end; ir0 += num_rows_per_vec_dot) {
                     const int64_t idx_flat = ir0 + ir1 * ne01;
                     if (need_compute[idx_flat]!=1) {
@@ -2502,7 +2506,7 @@ static void ggml_compute_forward_axpy_sparse_new(
     }
     GGML_ASSERT(params->wsize >= (size_t)((char *)wdata_cur - (char *)params->wdata));
 
-    // convert to same type, align precision
+    // convert to same type, align precision, src1 fp32->fp16
     if (src1->type != vec_dot_type) {
         char * wdata = params->wdata;
 
@@ -2535,7 +2539,7 @@ static void ggml_compute_forward_axpy_sparse_new(
 
     const int64_t        n_tokens = ne1;
     const int64_t    neu_len_char = nb01;
-    const int64_t  token_len_char = nb11;
+    const int64_t  token_len_char = ggml_type_size(vec_dot_type) * ne10;
 
     const int64_t neu_per_thread = (ne01 + nth - 1)/(nth);
     const int64_t start_neu = neu_per_thread*ith;  // start neu of the thread
@@ -2544,9 +2548,9 @@ static void ggml_compute_forward_axpy_sparse_new(
     // nvtxRangeId_t id_computing = nvtx_init(params, "computing", " ");
 
 #if defined(_MSC_VER)
-    float* vec = (float *)_malloca(ne00 * 4 * sizeof(float));  // why 4?
+    float* vec = (float *)_malloca(ne00 * sizeof(float));
 #else
-    float vec[ne00*4];
+    float vec[ne00];
 #endif
 
     void * thread_tmp_rs = vec;
@@ -2556,14 +2560,18 @@ static void ggml_compute_forward_axpy_sparse_new(
     for (int token = 0; token < n_tokens; token++) {
         input_row = (ggml_fp16_t *)((char *)input + token * token_len_char);
         sparse_idx_row = (float *)((char *)sparse_idx + token * idx->nb[1]);
-        memset(thread_tmp_rs, 0, ne00*4);
+        memset(thread_tmp_rs, 0, ne00*sizeof(float));
 
         for (int64_t neu_i = start_neu; neu_i < end_neu; neu_i++) {
+            if (neu_i >= ne01)  continue;
+            if (cpu_mask[neu_i] == 1 ) continue;
+            if (sparse_idx_row[neu_i] < 0.5f && ne11 == 1) continue; // only use sparse inference in batch=1
+
             ggml_fp16_t alpha_fp16 = input_row[neu_i];
             float alpha_fp32 = GGML_FP16_TO_FP32(alpha_fp16);
-		    if (neu_i >= ne01 || fabsf(alpha_fp32) < 1e-7f || cpu_mask[neu_i] == 1 || sparse_idx_row[neu_i] < 0.5f){ // GTODO: is it slow to perform GGML_FP16_TO_FP32??
-                continue;
-            }
+
+            if (fabsf(alpha_fp32) < 1e-7f) continue;
+
             ggml_fp16_t * src0_row = (ggml_fp16_t *)(src0_char + neu_len_char * neu_i);
             ggml_axpy_avx_f16_alphaf32(ne00, src0_row, thread_tmp_rs, alpha_fp32);
         }
@@ -2599,6 +2607,27 @@ static void ggml_compute_forward_axpy_sparse_new(
     _freea(vec);
 #endif
     // nvtxRangeEnd(id_computing);
+}
+
+//----------------------reload weights op----------------------------
+static void reload_weights(
+        const struct ggml_compute_params * params,
+              struct ggml_tensor * tensor) 
+{
+          struct ggml_tensor * weights     = tensor->src[0];
+    const struct ggml_tensor * sparse_idx  = tensor->src[1];
+          struct ggml_tensor * gpu_neu_idx = tensor->src[2];
+          struct ggml_tensor * DFR_score   = tensor->src[3]; // GTODO[reload]: we dont have DFR_score now
+
+    // GTODO[reload]: check weights is on GPU, while others are on CPU 
+    //        however we do not have such backend-checking API in ggml_tensor now
+    //        bring back backend_type enum in ggml_tensor like the old version??
+    // GGML_ASSERT(weigths->backend == GGML_BACKEND_GPU);
+    // GGML_ASSERT(sparse_idx->backend == GGML_BACKEND_CPU);
+    // GGML_ASSERT(gpu_neu_idx->backend == GGML_BACKEND_GPU);
+    // GGML_ASSERT(DFR_score->backend == GGML_BACKEND_CPU);
+
+    // GTODO[reload]: here is the real implementation of reloading weights, updating DFR_score and gpu_neu_idx
 }
 
 /////////////////////////////////
@@ -2727,8 +2756,8 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
         case GGML_OP_MUL_MAT_SPARSE:
             {
                 // int t_start = ggml_time_us();
-                // ggml_compute_forward_mul_mat_sparse(params, tensor);
-                ggml_compute_forward_mul_mat_sparse_premask(params, tensor);
+                ggml_compute_forward_mul_mat_sparse(params, tensor);
+                // ggml_compute_forward_mul_mat_sparse_premask(params, tensor);
                 // int t_end =ggml_time_us();
                 // printf("[TIMING]  mal_mat: time=%lld\n", t_end-t_start);
             } break;
@@ -2737,8 +2766,12 @@ static void ggml_compute_forward(struct ggml_compute_params * params, struct ggm
                 // int t_start = ggml_time_us();
                 ggml_compute_forward_axpy_sparse_new(params, tensor);
                 // int t_end =ggml_time_us();
-                // printf("[DEBUG_CPU]     axpy: tensor->name=%s, time= %lld us\n", tensor->name, t_end-t_start);
+                // printf("[DEBUG_CPU]     axpy: tensor->name=%s, time= %lld us\n", tensor->name, t_end-t_start); 
             }break;
+        case GGML_OP_RELOAD_WEIGHTS:
+            {
+                reload_weights(params, tensor);
+            } break;
         case GGML_OP_MUL_MAT_ID:
             {
                 ggml_compute_forward_mul_mat_id(params, tensor);
@@ -3148,6 +3181,10 @@ static int ggml_get_n_tasks(struct ggml_tensor * node, int n_threads) {
                 //     GGML_ASSERT(n_threads > 1 && "n_threads must be > 1 to enable hybrid CPU/GPU computation");
                 // }
 #endif
+            } break;
+        case GGML_OP_RELOAD_WEIGHTS:
+            {
+                n_tasks = 1;  // GTODO[reload]:  how many threads do we need for reloaidng?
             } break;
         case GGML_OP_GET_ROWS:
             {
@@ -3643,6 +3680,11 @@ struct ggml_cplan ggml_graph_plan(
                         if (node->src[1]->type != vec_dot_type) {
                             cur = ggml_row_size(vec_dot_type, ggml_nelements(node->src[1]));
                         }
+                    }break;
+                case GGML_OP_RELOAD_WEIGHTS:
+                    {
+                        // GTODO[reload]: how many memory do we need for reloading??
+                        cur = 0;
                     }break;
                 case GGML_OP_MUL_MAT_ID:
                     {
